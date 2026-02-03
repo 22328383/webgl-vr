@@ -19,3 +19,8 @@
 .vs/
 UserSettings/
 .vsconfig
+
+# Claude Code
+CLAUDE.md
+.claude/
+install.cmd
