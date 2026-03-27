@@ -1,0 +1,22 @@
+{
+  "description": "Estimated annual TID across the solar system (Table 3.3)",
+  "unit": "krad/yr",
+  "note": "For ranges, 'tid' is the midpoint. tid of -1 means Unknown. Only locations explicitly in the paper.",
+  "locations": [
+    { "id": "mercury_orbit",     "name": "Mercury Orbit",        "tid": 3.5,     "tid_min": 2.0,    "tid_max": 5.0,     "dominant_source": "spe",               "confidence": "low" },
+    { "id": "venus_orbit",       "name": "Venus Orbit",          "tid": 7.5,     "tid_min": 5.0,    "tid_max": 10.0,    "dominant_source": "spe",               "confidence": "low" },
+    { "id": "leo_iss",           "name": "LEO (ISS-like)",       "tid": 0.3,     "tid_min": 0.1,    "tid_max": 0.3,     "dominant_source": "gcr",               "confidence": "high" },
+    { "id": "geo",               "name": "GEO",                  "tid": 30.0,    "tid_min": 10.0,   "tid_max": 50.0,    "dominant_source": "trapped_electrons",  "confidence": "high" },
+    { "id": "interplanetary",    "name": "Interplanetary (1 AU)","tid": 0.012,   "tid_min": 0.012,  "tid_max": 0.012,   "dominant_source": "gcr",               "confidence": "high" },
+    { "id": "lunar_surface",     "name": "Lunar Surface",        "tid": 0.012,   "tid_min": 0.012,  "tid_max": 0.012,   "dominant_source": "gcr",               "confidence": "high" },
+    { "id": "mars_surface",      "name": "Mars Surface",         "tid": 0.008,   "tid_min": 0.006,  "tid_max": 0.009,   "dominant_source": "gcr",               "confidence": "high" },
+    { "id": "mars_orbit",        "name": "Mars Orbit",           "tid": 0.006,   "tid_min": 0.006,  "tid_max": 0.006,   "dominant_source": "gcr",               "confidence": "high" },
+    { "id": "jupiter_orbit",     "name": "Jupiter Orbit",        "tid": 1000.0,  "tid_min": 1000.0, "tid_max": 10000.0, "dominant_source": "trapped_electrons",  "confidence": "medium" },
+    { "id": "io",                "name": "Io (~5.9 Rj)",         "tid": 18000.0, "tid_min": 18000.0,"tid_max": 18000.0, "dominant_source": "trapped_electrons",  "confidence": "low" },
+    { "id": "europa",            "name": "Europa (~9.4 Rj)",     "tid": 3600.0,  "tid_min": 3600.0, "tid_max": 3600.0,  "dominant_source": "trapped_electrons",  "confidence": "medium" },
+    { "id": "ganymede",          "name": "Ganymede (~15 Rj)",    "tid": 220.0,   "tid_min": 220.0,  "tid_max": 220.0,   "dominant_source": "trapped_electrons",  "confidence": "medium" },
+    { "id": "saturn_orbit",      "name": "Saturn Orbit",         "tid": 10.0,    "tid_min": 1.0,    "tid_max": 10.0,    "dominant_source": "trapped_electrons",  "confidence": "low" },
+    { "id": "uranus_orbit",      "name": "Uranus Orbit",         "tid": -1,      "tid_min": -1,     "tid_max": -1,      "dominant_source": "trapped_electrons",  "confidence": "none" },
+    { "id": "neptune_orbit",     "name": "Neptune Orbit",        "tid": 10.0,    "tid_min": 1.0,    "tid_max": 10.0,    "dominant_source": "trapped_electrons",  "confidence": "very_low" }
+  ]
+}

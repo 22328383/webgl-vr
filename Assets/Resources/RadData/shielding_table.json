@@ -1,0 +1,22 @@
+{
+  "description": "Shielding reduction factors ABOVE the baseline already included in Table 3.3 TID values",
+  "note": "Table 3.3 TID numbers already assume ~10mm Al / light spacecraft shielding. These factors represent ADDITIONAL reduction from upgrading beyond that baseline. Low is the baseline (1.0x = no change). Medium and High represent heavier shielding upgrades.",
+  "confidence_note": "GCR and SPE factors are supported by HZETRN data and Artemis I measurements. Trapped electron factors are low-confidence estimates: Medium is interpolated, High is anchored to Europa Clipper vault data (150 krad behind vault vs ~700 krad/yr unshielded orbit-averaged = ~0.06x at 100 mil Al, but Clipper vault is heavier than 100 mil). These should be treated as rough approximations.",
+  "levels": [
+    {
+      "id": "low",    "name": "Low",    "label": "LOW",  "areal_density_gcm2": 5,
+      "description": "Baseline spacecraft bus (~5-10 g/cm² Al). This is what Table 3.3 already assumes.",
+      "gcr": 1.0,     "spe": 1.0,     "trapped_electrons": 1.0
+    },
+    {
+      "id": "medium", "name": "Medium", "label": "MED",  "areal_density_gcm2": 20,
+      "description": "Dedicated compartment (~20 g/cm² Al). Crewed module wall.",
+      "gcr": 0.9,     "spe": 0.3,     "trapped_electrons": 0.5
+    },
+    {
+      "id": "high",   "name": "High",   "label": "HIGH", "areal_density_gcm2": 45,
+      "description": "Heavy vault (~40-50 g/cm² Al-eq). Europa Clipper class.",
+      "gcr": 0.8,     "spe": 0.1,     "trapped_electrons": 0.1
+    }
+  ]
+}

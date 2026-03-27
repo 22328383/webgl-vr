@@ -6,7 +6,6 @@ using TMPro;
 
 public class SystemMapUI : MonoBehaviour {
 
-    // --- Color Palette ---
     private static readonly Color PanelBg       = new Color(0.05f, 0.05f, 0.08f, 0.85f);
     private static readonly Color GoldText       = new Color(0.9f, 0.75f, 0.3f, 1f);
     private static readonly Color GoldHighlight  = new Color(1f, 0.85f, 0.4f, 1f);
@@ -18,20 +17,20 @@ public class SystemMapUI : MonoBehaviour {
     private static readonly Color SliderFill     = new Color(0.8f, 0.65f, 0.2f, 1f);
     private static readonly Color SliderBg       = new Color(0.15f, 0.15f, 0.18f, 1f);
 
-    private static readonly string[] ShieldingLabels = { "OFF", "LOW", "MED", "HIGH" };
+    private static readonly string[] ShieldingLabels = { "LOW", "MED", "HIGH" };
 
-    // --- Runtime references ---
     private Canvas canvas;
     private RectTransform canvasRT;
     private TMP_Text tierInfoText;
     private TMP_Text selectionNameText;
     private TMP_Text selectionDetailText;
 
-    // Shielding slider
     private Slider shieldingSlider;
     private TMP_Text shieldingValueText;
 
-    // VR Preview
+    private Slider missionSlider;
+    private TMP_Text missionValueText;
+
     private bool vrToggleOn = false;
     private Camera previewCamera;
     private RenderTexture previewRenderTex;
@@ -40,7 +39,9 @@ public class SystemMapUI : MonoBehaviour {
     private TMP_Text previewLabel;
     private CanvasGroup previewCanvasGroup;
 
-    // Dropdown arrow buttons
+    private Image[] hardwareButtonImages;
+    private TMP_Text[] hardwareButtonTexts;
+
     private class DropdownArrow {
         public SpaceEnvironment env;
         public GameObject planetObj;
@@ -56,6 +57,7 @@ public class SystemMapUI : MonoBehaviour {
 
         GameManager.Instance.OnLocationChanged += OnLocationChanged;
         GameManager.Instance.OnSubLocationChanged += OnSubLocationChanged;
+        GameManager.Instance.OnFidelityChanged += OnFidelityChanged;
 
         if(GameManager.Instance.CurrentSelection.HasValue) {
             OnLocationChanged(GameManager.Instance.CurrentSelection.Value);
@@ -65,6 +67,8 @@ public class SystemMapUI : MonoBehaviour {
             previewCanvasGroup.alpha = 0f;
             previewCanvasGroup.blocksRaycasts = false;
         }
+
+        UpdateHardwareButtons(GameManager.Instance.HardwareClassIndex);
     }
 
     void LateUpdate() {
@@ -97,12 +101,10 @@ public class SystemMapUI : MonoBehaviour {
             arrow.arrowText.text = isExpanded ? "\u25B2" : "\u25BC";
         }
 
-        // Spin active preview object
         if(vrToggleOn && tierPreviewObjects != null) {
             foreach(var obj in tierPreviewObjects) {
                 if(obj != null && obj.activeSelf) {
-                    obj.transform.Rotate(Vector3.up, 45f * Time.deltaTime, Space.Self);
-                    obj.transform.Rotate(Vector3.right, 15f * Time.deltaTime, Space.Self);
+                    obj.transform.Rotate(0, 45f * Time.deltaTime, 0, Space.Self);
                 }
             }
         }
@@ -112,6 +114,7 @@ public class SystemMapUI : MonoBehaviour {
         if(GameManager.Instance != null) {
             GameManager.Instance.OnLocationChanged -= OnLocationChanged;
             GameManager.Instance.OnSubLocationChanged -= OnSubLocationChanged;
+            GameManager.Instance.OnFidelityChanged -= OnFidelityChanged;
         }
         if(previewRenderTex != null) previewRenderTex.Release();
     }
@@ -121,8 +124,6 @@ public class SystemMapUI : MonoBehaviour {
             SolarSystemBuilder.Instance.ToggleMoons(env);
         }
     }
-
-    // ========== UI CONSTRUCTION ==========
 
     private void BuildUI() {
         GameObject canvasGO = new GameObject("SystemMapCanvas");
@@ -157,7 +158,7 @@ public class SystemMapUI : MonoBehaviour {
             GameObject btnGO = new GameObject("Arrow_" + env);
             btnGO.transform.SetParent(canvasRT, false);
             arrow.buttonRT = btnGO.AddComponent<RectTransform>();
-            arrow.buttonRT.sizeDelta = new Vector2(48, 36); // bigger for WebGL clicking
+            arrow.buttonRT.sizeDelta = new Vector2(48, 36);
             arrow.buttonRT.anchorMin = new Vector2(0.5f, 0.5f);
             arrow.buttonRT.anchorMax = new Vector2(0.5f, 0.5f);
             arrow.buttonRT.pivot = new Vector2(0.5f, 0.5f);
@@ -190,7 +191,6 @@ public class SystemMapUI : MonoBehaviour {
         }
     }
 
-    // --- TOP BAR ---
     private void BuildTopBar(RectTransform parent) {
         RectTransform bar = CreatePanel(parent, "TopBar", PanelBg);
         bar.anchorMin = new Vector2(0, 1);
@@ -215,18 +215,17 @@ public class SystemMapUI : MonoBehaviour {
         tierRT.anchorMax = new Vector2(1, 1);
         tierRT.pivot = new Vector2(1, 0.5f);
         tierRT.anchoredPosition = new Vector2(-25, 0);
-        tierRT.sizeDelta = new Vector2(600, 0);
+        tierRT.sizeDelta = new Vector2(700, 0);
         tierInfoText.alignment = TextAlignmentOptions.MidlineRight;
     }
 
-    // --- SELECTION INFO PANEL (bottom-right) ---
     private void BuildSelectionInfo(RectTransform parent) {
         RectTransform panel = CreatePanel(parent, "SelectionInfo", PanelBg);
         panel.anchorMin = new Vector2(1, 0);
         panel.anchorMax = new Vector2(1, 0);
         panel.pivot = new Vector2(1, 0);
         panel.anchoredPosition = new Vector2(-20, 20);
-        panel.sizeDelta = new Vector2(340, 150);
+        panel.sizeDelta = new Vector2(380, 210);
 
         VerticalLayoutGroup vlg = panel.gameObject.AddComponent<VerticalLayoutGroup>();
         vlg.padding = new RectOffset(18, 18, 14, 14);
@@ -243,12 +242,11 @@ public class SystemMapUI : MonoBehaviour {
 
         CreateSeparator(panel);
 
-        selectionDetailText = CreateText(panel, "SelectionDetail", "Click on a planet or moon\nto view its details.", 16, DimText);
+        selectionDetailText = CreateText(panel, "SelectionDetail", "Click on a planet or moon\nto view its details.", 15, DimText);
         selectionDetailText.alignment = TextAlignmentOptions.TopLeft;
-        selectionDetailText.GetComponent<LayoutElement>().preferredHeight = 70;
+        selectionDetailText.GetComponent<LayoutElement>().preferredHeight = 130;
     }
 
-    // --- SETTINGS SIDEBAR ---
     private void BuildSettingsSidebar(RectTransform parent) {
         RectTransform sidebar = CreatePanel(parent, "SettingsSidebar", PanelBg);
         sidebar.anchorMin = new Vector2(0, 0.10f);
@@ -272,15 +270,36 @@ public class SystemMapUI : MonoBehaviour {
 
         CreateSeparator(sidebar);
 
-        // --- SHIELDING LEVEL ---
         CreateText(sidebar, "ShieldLabel", "SHIELDING LEVEL", 16, DimText).GetComponent<LayoutElement>().preferredHeight = 24;
+        TMP_Text shieldDesc = CreateText(sidebar, "ShieldDesc", "Spacecraft hull thickness\nreducing radiation exposure", 13, DimText);
+        shieldDesc.GetComponent<LayoutElement>().preferredHeight = 36;
+        shieldDesc.fontStyle = FontStyles.Italic;
         BuildShieldingSlider(sidebar);
 
         CreateSpacer(sidebar, 6);
         CreateSeparator(sidebar);
         CreateSpacer(sidebar, 6);
 
-        // --- VR PREVIEW ---
+        CreateText(sidebar, "MissionLabel", "MISSION DURATION", 16, DimText).GetComponent<LayoutElement>().preferredHeight = 24;
+        TMP_Text missionDesc = CreateText(sidebar, "MissionDesc", "Total years of operation\nat the selected location", 13, DimText);
+        missionDesc.GetComponent<LayoutElement>().preferredHeight = 36;
+        missionDesc.fontStyle = FontStyles.Italic;
+        BuildMissionSlider(sidebar);
+
+        CreateSpacer(sidebar, 6);
+        CreateSeparator(sidebar);
+        CreateSpacer(sidebar, 6);
+
+        CreateText(sidebar, "HWLabel", "HARDWARE CLASS", 16, DimText).GetComponent<LayoutElement>().preferredHeight = 24;
+        TMP_Text hwDesc = CreateText(sidebar, "HWDesc", "Onboard compute hardware\nfor VR rendering", 13, DimText);
+        hwDesc.GetComponent<LayoutElement>().preferredHeight = 36;
+        hwDesc.fontStyle = FontStyles.Italic;
+        BuildHardwareSelector(sidebar);
+
+        CreateSpacer(sidebar, 6);
+        CreateSeparator(sidebar);
+        CreateSpacer(sidebar, 6);
+
         CreateText(sidebar, "VRLabel", "VR PREVIEW", 16, DimText).GetComponent<LayoutElement>().preferredHeight = 24;
         TMP_Text vrDesc = CreateText(sidebar, "VRDesc", "Shows max feasible VR tier\nfor the selected location", 13, DimText);
         vrDesc.GetComponent<LayoutElement>().preferredHeight = 36;
@@ -291,7 +310,6 @@ public class SystemMapUI : MonoBehaviour {
         CreateSeparator(sidebar);
         CreateSpacer(sidebar, 6);
 
-        // --- VR PREVIEW DISPLAY (always reserves space, hidden via alpha) ---
         GameObject previewSection = new GameObject("PreviewSection");
         previewSection.transform.SetParent(sidebar, false);
         previewSection.AddComponent<RectTransform>();
@@ -311,7 +329,7 @@ public class SystemMapUI : MonoBehaviour {
 
         RectTransform previewPanelRT = previewSection.GetComponent<RectTransform>();
 
-        previewLabel = CreateText(previewPanelRT, "PreviewTierLabel", "MAX VR TIER: --", 17, GoldText);
+        previewLabel = CreateText(previewPanelRT, "PreviewTierLabel", "FIDELITY: --", 17, GoldText);
         previewLabel.alignment = TextAlignmentOptions.Center;
         previewLabel.fontStyle = FontStyles.Bold;
         previewLabel.GetComponent<LayoutElement>().preferredHeight = 28;
@@ -328,11 +346,10 @@ public class SystemMapUI : MonoBehaviour {
 
         shieldingSlider = sliderGO.AddComponent<Slider>();
         shieldingSlider.minValue = 0;
-        shieldingSlider.maxValue = 3;
+        shieldingSlider.maxValue = 2;
         shieldingSlider.wholeNumbers = true;
         shieldingSlider.value = 0;
 
-        // Background track
         GameObject bgGO = new GameObject("Background");
         bgGO.transform.SetParent(sliderRT, false);
         RectTransform bgRT = bgGO.AddComponent<RectTransform>();
@@ -343,7 +360,6 @@ public class SystemMapUI : MonoBehaviour {
         Image bgImg = bgGO.AddComponent<Image>();
         bgImg.color = SliderBg;
 
-        // Fill area
         GameObject fillAreaGO = new GameObject("FillArea");
         fillAreaGO.transform.SetParent(sliderRT, false);
         RectTransform fillAreaRT = fillAreaGO.AddComponent<RectTransform>();
@@ -362,7 +378,6 @@ public class SystemMapUI : MonoBehaviour {
         Image fillImg = fillGO.AddComponent<Image>();
         fillImg.color = SliderFill;
 
-        // Handle - bigger for easy clicking
         GameObject handleAreaGO = new GameObject("HandleSlideArea");
         handleAreaGO.transform.SetParent(sliderRT, false);
         RectTransform handleAreaRT = handleAreaGO.AddComponent<RectTransform>();
@@ -382,8 +397,7 @@ public class SystemMapUI : MonoBehaviour {
         shieldingSlider.handleRect = handleRT;
         shieldingSlider.targetGraphic = handleImg;
 
-        // Value label showing current level
-        shieldingValueText = CreateText(parent, "ShieldValue", "OFF", 18, GoldHighlight);
+        shieldingValueText = CreateText(parent, "ShieldValue", "LOW", 18, GoldHighlight);
         shieldingValueText.alignment = TextAlignmentOptions.Center;
         shieldingValueText.fontStyle = FontStyles.Bold;
         shieldingValueText.GetComponent<LayoutElement>().preferredHeight = 26;
@@ -393,6 +407,135 @@ public class SystemMapUI : MonoBehaviour {
             shieldingValueText.text = ShieldingLabels[level];
             GameManager.Instance.SetShieldingLevel(level);
         });
+    }
+
+    private void BuildMissionSlider(RectTransform parent) {
+        GameObject sliderGO = new GameObject("MissionSlider");
+        sliderGO.transform.SetParent(parent, false);
+        RectTransform sliderRT = sliderGO.AddComponent<RectTransform>();
+        LayoutElement le = sliderGO.AddComponent<LayoutElement>();
+        le.preferredHeight = 40;
+
+        missionSlider = sliderGO.AddComponent<Slider>();
+        missionSlider.minValue = 1;
+        missionSlider.maxValue = 20;
+        missionSlider.wholeNumbers = true;
+        missionSlider.value = 1;
+
+        GameObject bgGO = new GameObject("Background");
+        bgGO.transform.SetParent(sliderRT, false);
+        RectTransform bgRT = bgGO.AddComponent<RectTransform>();
+        bgRT.anchorMin = new Vector2(0, 0.3f);
+        bgRT.anchorMax = new Vector2(1, 0.7f);
+        bgRT.offsetMin = Vector2.zero;
+        bgRT.offsetMax = Vector2.zero;
+        Image bgImg = bgGO.AddComponent<Image>();
+        bgImg.color = SliderBg;
+
+        GameObject fillAreaGO = new GameObject("FillArea");
+        fillAreaGO.transform.SetParent(sliderRT, false);
+        RectTransform fillAreaRT = fillAreaGO.AddComponent<RectTransform>();
+        fillAreaRT.anchorMin = new Vector2(0, 0.3f);
+        fillAreaRT.anchorMax = new Vector2(1, 0.7f);
+        fillAreaRT.offsetMin = Vector2.zero;
+        fillAreaRT.offsetMax = Vector2.zero;
+
+        GameObject fillGO = new GameObject("Fill");
+        fillGO.transform.SetParent(fillAreaRT, false);
+        RectTransform fillRT = fillGO.AddComponent<RectTransform>();
+        fillRT.anchorMin = Vector2.zero;
+        fillRT.anchorMax = new Vector2(1, 1);
+        fillRT.offsetMin = Vector2.zero;
+        fillRT.offsetMax = Vector2.zero;
+        Image fillImg = fillGO.AddComponent<Image>();
+        fillImg.color = SliderFill;
+
+        GameObject handleAreaGO = new GameObject("HandleSlideArea");
+        handleAreaGO.transform.SetParent(sliderRT, false);
+        RectTransform handleAreaRT = handleAreaGO.AddComponent<RectTransform>();
+        handleAreaRT.anchorMin = Vector2.zero;
+        handleAreaRT.anchorMax = Vector2.one;
+        handleAreaRT.offsetMin = Vector2.zero;
+        handleAreaRT.offsetMax = Vector2.zero;
+
+        GameObject handleGO = new GameObject("Handle");
+        handleGO.transform.SetParent(handleAreaRT, false);
+        RectTransform handleRT = handleGO.AddComponent<RectTransform>();
+        handleRT.sizeDelta = new Vector2(28, 28);
+        Image handleImg = handleGO.AddComponent<Image>();
+        handleImg.color = GoldHighlight;
+
+        missionSlider.fillRect = fillRT;
+        missionSlider.handleRect = handleRT;
+        missionSlider.targetGraphic = handleImg;
+
+        missionValueText = CreateText(parent, "MissionValue", "1 YR", 18, GoldHighlight);
+        missionValueText.alignment = TextAlignmentOptions.Center;
+        missionValueText.fontStyle = FontStyles.Bold;
+        missionValueText.GetComponent<LayoutElement>().preferredHeight = 26;
+
+        missionSlider.onValueChanged.AddListener((val) => {
+            int years = Mathf.RoundToInt(val);
+            missionValueText.text = years + " YR";
+            GameManager.Instance.SetMissionDuration(years);
+        });
+    }
+
+    private void BuildHardwareSelector(RectTransform parent) {
+        GameObject rowGO = new GameObject("HardwareRow");
+        rowGO.transform.SetParent(parent, false);
+        rowGO.AddComponent<RectTransform>();
+        LayoutElement rowLE = rowGO.AddComponent<LayoutElement>();
+        rowLE.preferredHeight = 40;
+
+        HorizontalLayoutGroup hlg = rowGO.AddComponent<HorizontalLayoutGroup>();
+        hlg.spacing = 6;
+        hlg.childAlignment = TextAnchor.MiddleCenter;
+        hlg.childForceExpandWidth = true;
+        hlg.childForceExpandHeight = true;
+        hlg.childControlWidth = true;
+        hlg.childControlHeight = true;
+
+        hardwareButtonImages = new Image[4];
+        hardwareButtonTexts = new TMP_Text[4];
+
+        for(int i = 0; i < 4; i++) {
+            int index = i;
+            GameObject btnGO = new GameObject("HW_" + RadiationCalculator.HardwareNames[i]);
+            btnGO.transform.SetParent(rowGO.transform, false);
+            btnGO.AddComponent<RectTransform>();
+
+            Image img = btnGO.AddComponent<Image>();
+            img.color = ToggleOff;
+            hardwareButtonImages[i] = img;
+
+            Button btn = btnGO.AddComponent<Button>();
+            btn.targetGraphic = img;
+
+            TMP_Text txt = CreateText(btnGO.GetComponent<RectTransform>(), "Label",
+                RadiationCalculator.HardwareNames[i].ToUpper(), 11, DimText);
+            txt.alignment = TextAlignmentOptions.Center;
+            txt.fontStyle = FontStyles.Bold;
+            RectTransform txtRT = txt.GetComponent<RectTransform>();
+            txtRT.anchorMin = Vector2.zero;
+            txtRT.anchorMax = Vector2.one;
+            txtRT.offsetMin = Vector2.zero;
+            txtRT.offsetMax = Vector2.zero;
+            hardwareButtonTexts[i] = txt;
+
+            btn.onClick.AddListener(() => {
+                GameManager.Instance.SetHardwareClass(index);
+                UpdateHardwareButtons(index);
+            });
+        }
+    }
+
+    private void UpdateHardwareButtons(int selectedIndex) {
+        if(hardwareButtonImages == null) return;
+        for(int i = 0; i < 4; i++) {
+            hardwareButtonImages[i].color = (i == selectedIndex) ? ToggleOn : ToggleOff;
+            hardwareButtonTexts[i].color = (i == selectedIndex) ? GoldText : DimText;
+        }
     }
 
     private void BuildVRToggle(RectTransform parent) {
@@ -457,7 +600,6 @@ public class SystemMapUI : MonoBehaviour {
         outline.effectDistance = new Vector2(2, 2);
     }
 
-    // --- BACK BUTTON ---
     private void BuildBackButton(RectTransform parent) {
         RectTransform btnRT = CreatePanel(parent, "BackButton", ButtonNormal);
         btnRT.anchorMin = new Vector2(0, 0);
@@ -479,8 +621,6 @@ public class SystemMapUI : MonoBehaviour {
         btn.targetGraphic = btnRT.GetComponent<Image>();
     }
 
-    // ========== 3D PREVIEW SCENE ==========
-
     private void SetupPreviewScene() {
         previewRenderTex = new RenderTexture(512, 512, 16);
         previewRenderTex.antiAliasing = 2;
@@ -492,7 +632,7 @@ public class SystemMapUI : MonoBehaviour {
         previewCamera.targetTexture = previewRenderTex;
         previewCamera.clearFlags = CameraClearFlags.SolidColor;
         previewCamera.backgroundColor = new Color(0.03f, 0.03f, 0.06f, 1f);
-        previewCamera.fieldOfView = 30;
+        previewCamera.fieldOfView = 20;
         previewCamera.cullingMask = LayerMask.GetMask("Default");
         previewCamera.depth = -10;
 
@@ -507,43 +647,35 @@ public class SystemMapUI : MonoBehaviour {
         Vector3 center = new Vector3(1000, 1000, 1000);
         tierPreviewObjects = new GameObject[4];
 
-        // TIER 0: NONE
-        GameObject noneParent = new GameObject("Preview_None");
-        noneParent.transform.position = center;
-        GameObject noneSphere = CreatePreviewPrimitive(PrimitiveType.Sphere, center, 0.7f,
-            new Color(0.2f, 0.1f, 0.1f), "NoneSphere", false);
-        noneSphere.transform.SetParent(noneParent.transform, true);
-        GameObject xBar1 = CreatePreviewPrimitive(PrimitiveType.Cube, center, 1f,
-            new Color(0.7f, 0.15f, 0.1f), "XBar1", false);
-        xBar1.transform.SetParent(noneParent.transform, true);
-        xBar1.transform.localScale = new Vector3(0.08f, 0.08f, 2f);
-        xBar1.transform.localRotation = Quaternion.Euler(0, 0, 45);
-        GameObject xBar2 = CreatePreviewPrimitive(PrimitiveType.Cube, center, 1f,
-            new Color(0.7f, 0.15f, 0.1f), "XBar2", false);
-        xBar2.transform.SetParent(noneParent.transform, true);
-        xBar2.transform.localScale = new Vector3(0.08f, 0.08f, 2f);
-        xBar2.transform.localRotation = Quaternion.Euler(0, 0, -45);
-        tierPreviewObjects[0] = noneParent;
+        tierPreviewObjects[0] = LoadErrorTextModel(center);
+        if(tierPreviewObjects[0] == null) {
+            GameObject noneParent = new GameObject("Preview_None");
+            noneParent.transform.position = center;
+            GameObject noneSphere = CreatePreviewPrimitive(PrimitiveType.Sphere, center, 0.7f,
+                new Color(0.7f, 0.15f, 0.1f), "NoneSphere", true);
+            noneSphere.transform.SetParent(noneParent.transform, true);
+            tierPreviewObjects[0] = noneParent;
+        }
 
-        // TIER 1: LOW
-        tierPreviewObjects[1] = CreatePreviewPrimitive(PrimitiveType.Sphere, center, 0.8f,
-            new Color(0.3f, 0.5f, 0.3f), "Preview_Low", false);
+        tierPreviewObjects[1] = LoadPreviewModel("Models/Mario/mario", center, 0.015f, 0.45f);
+        if(tierPreviewObjects[1] == null)
+            tierPreviewObjects[1] = CreatePreviewPrimitive(PrimitiveType.Sphere, center, 0.8f,
+                new Color(0.3f, 0.5f, 0.3f), "Preview_Low", false);
 
-        // TIER 2: MEDIUM
-        tierPreviewObjects[2] = CreatePreviewPrimitive(PrimitiveType.Sphere, center, 0.8f,
-            new Color(0.3f, 0.4f, 0.8f), "Preview_Medium", true);
+        tierPreviewObjects[2] = LoadPreviewModel("Models/CounterStrike/COUNTER-TERRORIST_GIGN", center, 0.015f, 0.28f);
+        if(tierPreviewObjects[2] == null)
+            tierPreviewObjects[2] = CreatePreviewPrimitive(PrimitiveType.Sphere, center, 0.8f,
+                new Color(0.3f, 0.4f, 0.8f), "Preview_Medium", true);
 
-        // TIER 3: HIGH
-        GameObject highParent = new GameObject("Preview_High");
-        highParent.transform.position = center;
-        GameObject highSphere = CreatePreviewPrimitive(PrimitiveType.Sphere, center, 0.8f,
-            new Color(0.9f, 0.75f, 0.3f), "HighSphere", true);
-        highSphere.transform.SetParent(highParent.transform, true);
-        GameObject ring = CreatePreviewPrimitive(PrimitiveType.Cylinder, center, 1f,
-            new Color(1f, 0.85f, 0.4f, 0.7f), "HighRing", true);
-        ring.transform.SetParent(highParent.transform, true);
-        ring.transform.localScale = new Vector3(2.2f, 0.03f, 2.2f);
-        tierPreviewObjects[3] = highParent;
+        tierPreviewObjects[3] = LoadPreviewModel("Models/DoomSlayer/doommarine", center, 0.008f, 0.28f);
+        if(tierPreviewObjects[3] == null) {
+            GameObject highParent = new GameObject("Preview_High");
+            highParent.transform.position = center;
+            GameObject highSphere = CreatePreviewPrimitive(PrimitiveType.Sphere, center, 0.8f,
+                new Color(0.9f, 0.75f, 0.3f), "HighSphere", true);
+            highSphere.transform.SetParent(highParent.transform, true);
+            tierPreviewObjects[3] = highParent;
+        }
 
         for(int i = 0; i < tierPreviewObjects.Length; i++) {
             tierPreviewObjects[i].SetActive(false);
@@ -574,6 +706,144 @@ public class SystemMapUI : MonoBehaviour {
         return obj;
     }
 
+    private GameObject LoadErrorTextModel(Vector3 center) {
+        GameObject prefab = Resources.Load<GameObject>("Models/ErrorText/ERRORText");
+        if(prefab == null) return null;
+
+        GameObject instance = Instantiate(prefab);
+        instance.name = "Preview_ErrorText";
+
+        foreach(Collider col in instance.GetComponentsInChildren<Collider>())
+            Destroy(col);
+
+        Renderer[] renderers = instance.GetComponentsInChildren<Renderer>();
+        if(renderers.Length == 0) {
+            Destroy(instance);
+            return null;
+        }
+
+        ApplyModelTextures(instance, "Models/ErrorText/ERRORText");
+
+        instance.transform.position = center;
+        instance.transform.localScale = Vector3.one;
+
+        Bounds bounds = new Bounds(center, Vector3.zero);
+        foreach(Renderer r in renderers)
+            bounds.Encapsulate(r.bounds);
+
+        float maxDim = Mathf.Max(bounds.size.x, bounds.size.y, bounds.size.z);
+        if(maxDim > 0.001f) {
+            float targetSize = 1.2f;
+            float s = targetSize / maxDim;
+            instance.transform.localScale = Vector3.one * s;
+        }
+
+        bounds = new Bounds(center, Vector3.zero);
+        foreach(Renderer r in instance.GetComponentsInChildren<Renderer>())
+            bounds.Encapsulate(r.bounds);
+        Vector3 offset = center - bounds.center;
+        instance.transform.position += offset;
+
+        return instance;
+    }
+
+    private GameObject LoadPreviewModel(string resourcePath, Vector3 position, float scale, float bustFraction) {
+        GameObject prefab = Resources.Load<GameObject>(resourcePath);
+        if(prefab == null) return null;
+
+        GameObject instance = Instantiate(prefab);
+        instance.name = "Preview_" + prefab.name;
+        instance.transform.position = position;
+        instance.transform.localScale = Vector3.one * scale;
+
+        foreach(Collider col in instance.GetComponentsInChildren<Collider>())
+            Destroy(col);
+
+        Renderer[] renderers = instance.GetComponentsInChildren<Renderer>();
+        if(renderers.Length == 0) {
+            Destroy(instance);
+            return null;
+        }
+
+        ApplyModelTextures(instance, resourcePath);
+
+        Bounds bounds = new Bounds(instance.transform.position, Vector3.zero);
+        foreach(Renderer r in renderers)
+            bounds.Encapsulate(r.bounds);
+
+        if(bounds.size.magnitude > 0.01f) {
+            float fullHeight = bounds.size.y;
+            float bustTop = bounds.max.y;
+            float bustBottom = bustTop - fullHeight * bustFraction;
+            float bustHeight = bustTop - bustBottom;
+            float bustCenterY = bustBottom + bustHeight * 0.5f;
+
+            float maxExtent = Mathf.Max(bounds.extents.x, bustHeight * 0.5f, bounds.extents.z);
+            if(maxExtent > 0) {
+                float desiredSize = 0.9f;
+                float adjustedScale = (desiredSize / maxExtent) * instance.transform.localScale.x;
+                instance.transform.localScale = Vector3.one * adjustedScale;
+            }
+
+            bounds = new Bounds(instance.transform.position, Vector3.zero);
+            foreach(Renderer r in instance.GetComponentsInChildren<Renderer>())
+                bounds.Encapsulate(r.bounds);
+
+            fullHeight = bounds.size.y;
+            bustTop = bounds.max.y;
+            bustBottom = bustTop - fullHeight * bustFraction;
+            bustCenterY = bustBottom + (bustTop - bustBottom) * 0.5f;
+
+            Vector3 offset = position - new Vector3(bounds.center.x, bustCenterY, bounds.center.z);
+            instance.transform.position += offset;
+        }
+
+        return instance;
+    }
+
+    private void ApplyModelTextures(GameObject instance, string resourcePath) {
+        string folder = resourcePath.Substring(0, resourcePath.LastIndexOf('/') + 1);
+
+        foreach(Renderer rend in instance.GetComponentsInChildren<Renderer>()) {
+            foreach(Material mat in rend.materials) {
+                if(mat.mainTexture != null) continue;
+
+                string matName = mat.name.Replace(" (Instance)", "");
+
+                string texName = null;
+                if(matName.Contains("GIGN_DMBASE2")) texName = "GIGN_DMBASE2";
+                else if(matName.Contains("Backpack2")) texName = "Backpack2";
+                else if(matName.Contains("doommarine_arms")) texName = "models_characters_doommarine_doommarine_arms_c";
+                else if(matName.Contains("doommarine_cowl")) texName = "models_characters_doommarine_doommarine_cowl_c";
+                else if(matName.Contains("doommarine_helmet")) texName = "models_characters_doommarine_doommarine_helmet_c";
+                else if(matName.Contains("doommarine_legs")) texName = "models_characters_doommarine_doommarine_legs_c";
+                else if(matName.Contains("doommarine_torso")) texName = "models_characters_doommarine_doommarine_torso_c";
+                else if(matName.Contains("doommarine_visor")) texName = "models_characters_doommarine_doommarine_visor_c";
+                else if(matName.Contains("typeBlinn") || resourcePath.Contains("ErrorText")) texName = "ERRORText_typeBlinn_BaseColor";
+
+                if(texName != null) {
+                    Texture2D tex = Resources.Load<Texture2D>(folder + texName);
+                    if(tex != null) {
+                        mat.mainTexture = tex;
+                        if(texName.Contains("ERRORText")) {
+                            Texture2D emTex = Resources.Load<Texture2D>(folder + "ERRORText_typeBlinn_Emissive");
+                            if(emTex != null) {
+                                mat.EnableKeyword("_EMISSION");
+                                mat.SetTexture("_EmissionMap", emTex);
+                                mat.SetColor("_EmissionColor", Color.white);
+                            }
+                        }
+                    }
+                }
+
+                if(mat.mainTexture == null) {
+                    Texture2D[] allTex = Resources.LoadAll<Texture2D>(folder.TrimEnd('/'));
+                    if(allTex.Length > 0) mat.mainTexture = allTex[0];
+                }
+            }
+        }
+    }
+
     private void ShowPreviewTier(int vrTierLevel) {
         if(tierPreviewObjects == null) return;
         for(int i = 0; i < tierPreviewObjects.Length; i++) {
@@ -583,7 +853,7 @@ public class SystemMapUI : MonoBehaviour {
 
         string[] tierNames = { "NONE", "LOW", "MEDIUM", "HIGH" };
         if(previewLabel != null) {
-            previewLabel.text = "MAX VR TIER: " + tierNames[vrTierLevel];
+            previewLabel.text = "FIDELITY: " + tierNames[vrTierLevel];
         }
     }
 
@@ -591,53 +861,63 @@ public class SystemMapUI : MonoBehaviour {
         if(!vrToggleOn) return;
 
         GameManager gm = GameManager.Instance;
-        int vrTier = 0;
-
-        if(gm.CurrentSubLocation != null && gm.CurrentSelection.HasValue) {
-            vrTier = gm.GetMoonVRTierLevel(gm.CurrentSubLocation, gm.CurrentSelection.Value);
-        } else if(gm.CurrentSelection.HasValue) {
-            vrTier = gm.GetVRTierLevel(gm.CurrentSelection.Value);
-        }
-
-        ShowPreviewTier(vrTier);
+        ShowPreviewTier(gm.CurrentResult.tierLevel);
     }
 
-    // ========== EVENT HANDLERS ==========
-
     private void OnLocationChanged(SpaceEnvironment env) {
-        string tier = GameManager.Instance.GetTierName(env);
-        int vrTier = GameManager.Instance.GetVRTierLevel(env);
-        string[] vrNames = { "None", "Low", "Medium", "High" };
-
-        tierInfoText.text = env.ToString().ToUpper() + "  |  TIER: " + tier.ToUpper() + "  |  VR: " + vrNames[vrTier].ToUpper();
+        selectionNameText.text = env.ToString().ToUpper();
         tierInfoText.color = GoldText;
 
-        selectionNameText.text = env.ToString().ToUpper();
-
         int moonCount = SubLocationDatabase.GetSubLocations(env).Count;
-        string moonsLine = moonCount > 0 ? "Moons: " + moonCount : "No known moons";
-        selectionDetailText.text = "Type: Planet\nTier: " + tier + "\nMax VR: " + vrNames[vrTier] + "\n" + moonsLine;
-
-        RefreshVRPreview();
+        string moonsLine = moonCount > 0 ? "Sub-locations: " + moonCount : "No sub-locations";
+        selectionDetailText.text = "Type: Planet\n" + moonsLine + "\n\nCalculating...";
     }
 
     private void OnSubLocationChanged(string subName) {
-        if(GameManager.Instance.CurrentSelection.HasValue) {
-            SpaceEnvironment env = GameManager.Instance.CurrentSelection.Value;
-            string tier = GameManager.Instance.GetTierName(env);
-            int vrTier = GameManager.Instance.GetMoonVRTierLevel(subName, env);
-            string[] vrNames = { "None", "Low", "Medium", "High" };
-
-            tierInfoText.text = env.ToString().ToUpper() + " > " + subName.ToUpper() + "  |  VR: " + vrNames[vrTier].ToUpper();
-
-            selectionNameText.text = subName.ToUpper();
-            selectionDetailText.text = "Type: Moon\nParent: " + env.ToString() + "\nTier: " + tier + "\nMax VR: " + vrNames[vrTier];
-
-            RefreshVRPreview();
-        }
+        if(!GameManager.Instance.CurrentSelection.HasValue) return;
+        selectionNameText.text = subName.ToUpper();
+        selectionDetailText.text = "Type: Moon\n\nCalculating...";
     }
 
-    // ========== UTILITY ==========
+    private void OnFidelityChanged(FidelityResult result) {
+        string locName = string.IsNullOrEmpty(GameManager.Instance.CurrentSubLocation)
+            ? GameManager.Instance.CurrentSelection.Value.ToString().ToUpper()
+            : GameManager.Instance.CurrentSubLocation.ToUpper();
+
+        string lifespan = RadiationCalculator.FormatLifespan(result.lifespanYears);
+        bool willFail = result.lifespanYears > 0 && result.lifespanYears < result.missionDurationYears;
+
+        string topLifespan = lifespan;
+        if(willFail) {
+            topLifespan = "<color=#FF4444>FAILS AT YEAR " + Mathf.FloorToInt(result.lifespanYears) + "</color>";
+        }
+
+        tierInfoText.text = locName + "  |  " + topLifespan;
+        tierInfoText.color = GoldText;
+
+        selectionNameText.text = locName;
+
+        bool isMoon = !string.IsNullOrEmpty(GameManager.Instance.CurrentSubLocation);
+        string typeStr = isMoon ? "Moon" : "Planet";
+
+        string lifespanLine = willFail
+            ? "<color=#FF4444>HARDWARE FAILS AT YEAR " + Mathf.FloorToInt(result.lifespanYears) + "</color>"
+            : lifespan;
+
+        string detail = "Type: " + typeStr
+            + "\nEff. TID: " + result.effectiveTID.ToString("F3") + " krad/yr"
+            + "\nMission Dose: " + result.totalMissionDose.ToString("F2") + " krad"
+            + "\nFidelity: " + result.tierName + " (" + result.tierShortName + ")"
+            + "\nLifespan: " + lifespanLine;
+
+        if(!result.hardwareSurvives) {
+            detail += "\n<color=#FF4444>Total dose exceeds tolerance!</color>";
+        }
+
+        selectionDetailText.text = detail;
+
+        RefreshVRPreview();
+    }
 
     private RectTransform CreatePanel(RectTransform parent, string name, Color color) {
         GameObject go = new GameObject(name);
@@ -657,6 +937,7 @@ public class SystemMapUI : MonoBehaviour {
         tmp.fontSize = fontSize;
         tmp.color = color;
         tmp.fontStyle = FontStyles.Normal;
+        tmp.richText = true;
 
         if(go.GetComponent<LayoutElement>() == null) {
             go.AddComponent<LayoutElement>();

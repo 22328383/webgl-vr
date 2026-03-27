@@ -1,0 +1,11 @@
+{
+  "description": "Computational overhead of fault tolerance techniques (Table 3.1)",
+  "note": "Divide raw GFLOPS by overhead_factor to get effective GFLOPS",
+  "techniques": [
+    { "id": "rhbd",             "name": "RHBD (silicon-level)",  "overhead_factor": 1.0,   "overhead_range": [1.0, 1.0],   "applicable_hardware": "Rad-hard" },
+    { "id": "secded_watchdog",  "name": "SECDED + watchdog",     "overhead_factor": 1.125, "overhead_range": [1.1, 1.15],  "applicable_hardware": "COTS" },
+    { "id": "abft",             "name": "ABFT (checksums)",      "overhead_factor": 1.15,  "overhead_range": [1.05, 1.3],  "applicable_hardware": "COTS GPUs" },
+    { "id": "time_dwc",         "name": "Time-based DWC",        "overhead_factor": 2.0,   "overhead_range": [2.0, 2.0],   "applicable_hardware": "COTS CPUs and GPUs" },
+    { "id": "software_tmr",     "name": "Software TMR",          "overhead_factor": 3.0,   "overhead_range": [3.0, 3.0],   "applicable_hardware": "COTS in harsh environments" }
+  ]
+}

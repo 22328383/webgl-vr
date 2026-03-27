@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using UnityEngine;
 
 public enum SpaceEnvironment {
-    Sun,
     Mercury,
     Venus,
     Earth,
@@ -40,26 +39,10 @@ public static class SubLocationDatabase {
                 new SubLocation("Moon", SpaceEnvironment.Earth),
                 new SubLocation("ISS", SpaceEnvironment.Earth)
             }},
-            { SpaceEnvironment.Mars, new List<SubLocation> {
-                new SubLocation("Phobos", SpaceEnvironment.Mars),
-                new SubLocation("Deimos", SpaceEnvironment.Mars)
-            }},
             { SpaceEnvironment.Jupiter, new List<SubLocation> {
                 new SubLocation("Io", SpaceEnvironment.Jupiter),
                 new SubLocation("Europa", SpaceEnvironment.Jupiter),
-                new SubLocation("Ganymede", SpaceEnvironment.Jupiter),
-                new SubLocation("Callisto", SpaceEnvironment.Jupiter)
-            }},
-            { SpaceEnvironment.Saturn, new List<SubLocation> {
-                new SubLocation("Titan", SpaceEnvironment.Saturn),
-                new SubLocation("Enceladus", SpaceEnvironment.Saturn)
-            }},
-            { SpaceEnvironment.Uranus, new List<SubLocation> {
-                new SubLocation("Titania", SpaceEnvironment.Uranus),
-                new SubLocation("Miranda", SpaceEnvironment.Uranus)
-            }},
-            { SpaceEnvironment.Neptune, new List<SubLocation> {
-                new SubLocation("Triton", SpaceEnvironment.Neptune)
+                new SubLocation("Ganymede", SpaceEnvironment.Jupiter)
             }}
         };
     }

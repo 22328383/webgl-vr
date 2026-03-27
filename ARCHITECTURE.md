@@ -1,764 +1,993 @@
-# Sol System Map - Architecture & Code Documentation
+# Sol System Map — Full Architecture Document
 
-A comprehensive guide to every file, class, method, and concept in this Unity WebGL application.
-
----
-
-## 1. Overview
-
-This is a **Unity WebGL application** that displays an interactive solar system map. Users can:
-
-- View all 9 celestial bodies (Sun, Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune) as 3D spheres arranged horizontally
-- Click on planets to select them and see their details
-- Expand dropdown menus to reveal moons/stations below each planet
-- Click on moons to select them and see their details
-- Adjust a **Shielding Level** slider (Off / Low / Med / High)
-- Toggle a **VR Preview** that shows a spinning 3D model representing the max feasible VR graphics tier for the selected location
-- All rendered with a dark sci-fi aesthetic (gold text on semi-transparent dark panels)
-
-The UI is inspired by the system map from Elite Dangerous.
+This document covers every file, every class, every method, every trick, and every data flow in the application. Written for someone who has never seen the codebase before.
 
 ---
 
-## 2. Project Structure
+## Table of Contents
+
+1. [What This App Does](#what-this-app-does)
+2. [Project Structure](#project-structure)
+3. [Design Principles](#design-principles)
+4. [Data Files (JSON)](#data-files-json)
+5. [C# Source Files](#c-source-files)
+6. [3D Model Assets](#3d-model-assets)
+7. [Application Flow](#application-flow)
+8. [The Radiation Algorithm](#the-radiation-algorithm)
+9. [UI System — How It All Gets Built](#ui-system--how-it-all-gets-built)
+10. [The VR Preview System](#the-vr-preview-system)
+11. [The Dropdown Animation System](#the-dropdown-animation-system)
+12. [Coordinate Conversion Trick](#coordinate-conversion-trick)
+13. [Event-Driven Architecture](#event-driven-architecture)
+14. [Unity-Specific Tricks](#unity-specific-tricks)
+15. [What's Good About This Codebase](#whats-good-about-this-codebase)
+16. [What Could Be Improved](#what-could-be-improved)
+17. [How to Modify Things](#how-to-modify-things)
+18. [WebGL Deployment](#webgl-deployment)
+
+---
+
+## What This App Does
+
+An interactive 3D solar system map inspired by Elite Dangerous. You click on planets and moons (actual 3D spheres in the scene) to see radiation feasibility data for running VR hardware in space. A left sidebar lets you tune parameters — shielding level, mission duration, hardware class, and a VR preview toggle. A bottom-right info panel shows computed fidelity results. A top bar shows the current location and hardware lifespan.
+
+The core question the app answers: "If I put a specific computer at a specific place in the solar system, with a specific amount of shielding, for a specific number of years — what level of VR could it run before radiation kills it?"
+
+---
+
+## Project Structure
 
 ```
 Assets/
-  SpaceLocation.cs      -- Data definitions (enums, moon database, component nametags)
-  GameManager.cs         -- Central state manager (singleton, events, selection tracking)
-  ClickDetector.cs       -- Mouse input handler (raycasting into 3D world)
-  SolarSystemBuilder.cs  -- Creates all planet/moon 3D spheres at runtime
-  SystemMapUI.cs         -- Builds all UI elements in code (sidebar, top bar, preview)
-  Scenes/
-    SampleScene.unity    -- The main Unity scene file
+  GameManager.cs              Central state manager (singleton)
+  RadiationCalculator.cs      Static algorithm engine + JSON loader
+  SpaceLocation.cs            Enum, data classes, MonoBehaviour markers
+  SolarSystemBuilder.cs       Builds 3D planets/moons from JSON (singleton)
+  SystemMapUI.cs              Entire UI built programmatically in code
+  ClickDetector.cs            Raycasts mouse clicks onto 3D objects
+  LocationPanelUI.cs          (Legacy file — may still exist but unused)
+  Resources/
+    RadData/
+      solar_system.json       Planet and moon definitions
+      dosimetry_table.json    Radiation levels per location
+      shielding_table.json    Shielding reduction factors
+      hardware_classes.json   Hardware specs (4 classes)
+      fidelity_tiers.json     VR tier thresholds
+      overhead_factors.json   Reference only — not loaded by code
+    Models/
+      Mario/                  Mario model (.obj + textures) — Tier 1 (LOW)
+      CounterStrike/          CS:GIGN model (.obj + textures) — Tier 2 (MED)
+      DoomSlayer/             Doom Marine model (.obj + textures) — Tier 3 (HIGH)
+      ErrorText/              ERROR text model (.fbx + textures) — Tier 0 (NONE)
 ```
 
 ---
 
-## 3. File-by-File Breakdown
+## Design Principles
+
+**No Prefabs.** The entire UI and 3D scene is constructed in C# code at runtime. There are no `.prefab` files. Every Canvas, panel, slider, button, text element, and 3D sphere is created via `new GameObject()` and `AddComponent<>()`. This was a deliberate choice — the project was built from a text editor without access to the Unity Editor's visual tools.
+
+**No Comments.** The codebase contains zero comments. Method and variable names are intended to be self-documenting.
+
+**JSON-Driven Data.** All scientific data (radiation levels, hardware specs, shielding factors, fidelity thresholds) and all scene data (planet positions, sizes, colors, moons) live in JSON files under `Assets/Resources/RadData/`. Nothing is hardcoded in C# that could change independently of code.
+
+**Singleton Pattern.** `GameManager.Instance` and `SolarSystemBuilder.Instance` are set in `Awake()` for global access. No dependency injection — components reach each other through these statics.
+
+**Event-Driven Updates.** When state changes in `GameManager`, C# `Action` events fire. Subscribers (`SystemMapUI`) update themselves. The flow is always: user action → GameManager setter → event → UI update.
+
+**Lazy Initialization.** `RadiationCalculator.EnsureLoaded()` loads JSON on first call. `SubLocationDatabase.Data` builds its dictionary on first access. Data is only loaded once and cached.
+
+**WebGL-Safe.** All file I/O uses `Resources.Load<TextAsset>()` which is synchronous and works in WebGL builds (unlike `File.ReadAllText` or `StreamReader`). `JsonUtility.FromJson` is Unity's built-in JSON parser.
 
 ---
 
-### 3.1 SpaceLocation.cs
+## Data Files (JSON)
 
-This file defines **what things exist** in the solar system. It contains 4 things:
+### solar_system.json
 
-#### SpaceEnvironment (enum)
-```csharp
-public enum SpaceEnvironment {
-    Sun, Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune
-}
+Defines the 3D scene layout. Two arrays: `planets` and `moons`.
+
+**Planets array** — 8 entries (Mercury through Neptune):
+- `name`: Must match `SpaceEnvironment` enum exactly (case-sensitive for `Enum.Parse`)
+- `distance`: X-axis position in world units. Mercury=2, Neptune=42. Planets are spread horizontally.
+- `radius`: Sphere radius. Converted to diameter via `localScale = Vector3.one * radius * 2f`
+- `color`: RGB float array [0-1]. Applied to a Standard shader material.
+- `spin_speed`: Degrees per second the planet rotates. Negative = retrograde (Venus at -8, Uranus at -18).
+
+**Moons array** — 5 entries (Moon, ISS under Earth; Io, Europa, Ganymede under Jupiter):
+- `name`: Display name and lookup key
+- `parent`: Must match a planet name exactly
+- `radius`: Same as planets
+- `color`: Same as planets
+
+Moons are positioned vertically below their parent planet. Spacing is 1.4 world units. First moon starts at `-(planetRadius + 3.0)` below the planet's Y position.
+
+### dosimetry_table.json
+
+15 locations with annual radiation dose data from the research paper (Table 3.3).
+
+Each entry:
+- `id`: Lookup key (e.g., `"mercury_orbit"`, `"europa"`, `"leo_iss"`)
+- `name`: Human-readable name shown nowhere in UI (stored in FidelityResult but overridden by app names)
+- `tid`: Total Ionizing Dose in krad/year. The central input to the algorithm. `-1` means unknown (Uranus).
+- `tid_min`, `tid_max`: Confidence range. Not used in calculations — reference only.
+- `dominant_source`: One of `"gcr"`, `"spe"`, `"trapped_electrons"`. Determines which shielding column to use.
+- `confidence`: How reliable the data is. Not used in calculations.
+
+Key values: LEO/ISS = 0.3 krad/yr, Moon = 0.012, Mars Orbit = 0.006, Jupiter = 1000, Io = 18000, Europa = 3600, Ganymede = 220. These span 6 orders of magnitude.
+
+The app maps its location names to dosimetry IDs via `RadiationCalculator.locationIdMap`:
 ```
-An **enum** is a fixed list of named options. A planet can only be one of these 9 values. Enums are used everywhere in the code to identify which planet we're talking about.
-
-#### SubLocation (class)
-```csharp
-public class SubLocation {
-    public string name;              // e.g. "Moon", "Phobos", "Titan"
-    public SpaceEnvironment parent;  // e.g. SpaceEnvironment.Earth
-}
+Mercury → mercury_orbit    Venus → venus_orbit       Earth → leo_iss
+Mars → mars_orbit          Jupiter → jupiter_orbit    Saturn → saturn_orbit
+Uranus → uranus_orbit      Neptune → neptune_orbit    Moon → lunar_surface
+ISS → leo_iss              Io → io                    Europa → europa
+Ganymede → ganymede
 ```
-Represents a moon or space station. Each one has a name and knows which planet it belongs to. The `[System.Serializable]` attribute means Unity can show it in the Inspector panel.
 
-#### SubLocationDatabase (static class)
-```csharp
-public static class SubLocationDatabase { ... }
-```
-A **hardcoded lookup table** mapping each planet to its list of moons:
+Note: Earth and ISS both map to `leo_iss`. GEO, Mars Surface, and Interplanetary exist in the JSON but have no corresponding app locations.
 
-| Planet  | Moons/Stations                     |
-|---------|-------------------------------------|
-| Earth   | Moon, ISS                           |
-| Mars    | Phobos, Deimos                      |
-| Jupiter | Io, Europa, Ganymede, Callisto      |
-| Saturn  | Titan, Enceladus                    |
-| Uranus  | Titania, Miranda                    |
-| Neptune | Triton                              |
+### shielding_table.json
 
-The `static` keyword means there's only ONE copy of this database shared by all scripts. You never create an instance of it -- you just call `SubLocationDatabase.GetSubLocations(SpaceEnvironment.Earth)` and get back `[Moon, ISS]`.
+3 shielding levels with reduction factors per radiation source type.
 
-The database uses **lazy initialization**: it only builds itself the first time someone asks for data. This is the `if(_data == null) BuildDatabase()` pattern.
+| Level | Areal Density | GCR   | SPE  | Trapped Electrons |
+|-------|---------------|-------|------|-------------------|
+| Low   | 5 g/cm²       | 1.0   | 1.0  | 1.0               |
+| Medium| 20 g/cm²      | 0.9   | 0.3  | 0.5               |
+| High  | 45 g/cm²      | 0.8   | 0.1  | 0.1               |
 
-#### SpaceLocation (MonoBehaviour)
-```csharp
-public class SpaceLocation : MonoBehaviour {
-    public SpaceEnvironment environment;
-}
-```
-A **component** (nametag) that gets attached to planet 3D spheres. When this is on a GameObject, it tells the code "this sphere IS Earth" or "this sphere IS Mars". MonoBehaviour means it can be attached to GameObjects in Unity.
+Low is the baseline — the TID values in the dosimetry table already assume ~5-10mm aluminum shielding. Medium and High represent additional shielding on top of that. The `dominant_source` field in dosimetry determines which column is used.
 
-#### SubLocationMarker (MonoBehaviour)
-```csharp
-public class SubLocationMarker : MonoBehaviour {
-    public string subLocationName;
-    public SpaceEnvironment parentEnvironment;
-}
-```
-Same concept but for moons. Attached to moon spheres. Tells the code "this sphere is Phobos, and it belongs to Mars."
+GCR (galactic cosmic rays) is barely affected by shielding — even High only reduces it to 0.8x. SPE (solar particle events) is highly shieldable — High reduces to 0.1x. Trapped electrons (Jupiter system) are also very shieldable at 0.1x with heavy vaulting (Europa Clipper class).
+
+### hardware_classes.json
+
+4 hardware classes representing real space-capable computers.
+
+| Class | GFLOPS | TID Tolerance | Overhead | Examples |
+|-------|--------|---------------|----------|----------|
+| Legacy Rad-Hard | 0.001 | 1000 krad | 1.0x | RAD750 |
+| Modern Rad-Hard | 3.7 | 100 krad | 1.0x | RAD5545, GR740, RC64 |
+| FPGA | 529.5 | 100 krad | 1.15x | Virtex-5QV, NG-ULTRA |
+| COTS | 1567 | 30 krad | 1.0x | Jetson Nano/Xavier/Orin |
+
+COTS has 1.0x overhead because the model assumes no software fault tolerance — raw performance, it survives or it dies. Rad-hard chips have protection built into the silicon (RHBD). FPGA overhead comes from SECDED error correction.
+
+The tradeoff: COTS has ~400x the compute of modern rad-hard, but only 30 krad tolerance vs 100-1000 krad. In benign environments (Moon, Mars), COTS dominates. In harsh environments (Jupiter moons), only rad-hard survives.
+
+### fidelity_tiers.json
+
+4 VR fidelity tiers based on effective GFLOPS thresholds.
+
+| Tier | Name | Short | Min GFLOPS | Reference System |
+|------|------|-------|------------|-----------------|
+| 0 | Infeasible | NONE | -1 (catch-all) | — |
+| 1 | Wireframe VR | LOW | 0.08 | Virtuality 1000 (1991) |
+| 2 | Textured VR | MED | 0.2 | Virtuality 2000 (1993-94) |
+| 3 | Modern VR | HIGH | 567 | Meta Quest 1 (2019) |
+
+The algorithm iterates tiers from highest to lowest (3→0) and picks the first one where `effectiveGFLOPS >= gflops_min`. Tier 0 has `gflops_min: -1` so it always matches as the fallback.
+
+### overhead_factors.json
+
+Reference-only documentation of fault tolerance techniques from Table 3.1. Lists RHBD (1.0x), SECDED (1.125x), ABFT (1.15x), DWC (2.0x), TMR (3.0x). This file is NOT loaded by any code — it exists purely for documentation.
 
 ---
 
-### 3.2 GameManager.cs
+## C# Source Files
 
-The **central brain** of the application. Everything talks to this.
+### SpaceLocation.cs (63 lines)
 
-#### Singleton Pattern
-```csharp
-public static GameManager Instance;
+Defines the core data types that everything else uses.
 
-void Awake() {
-    Instance = this;
-}
-```
-There is only ONE GameManager. Any script anywhere can access it by writing `GameManager.Instance`. The `Awake()` method runs once when the object is created (before `Start()`), so by the time other scripts run, `Instance` is already set.
+**`SpaceEnvironment` enum** — The 8 planets: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune. No Sun (no dosimetry data). This enum is the primary key for location selection throughout the app.
 
-#### State Properties
-```csharp
-public SpaceEnvironment? CurrentSelection { get; private set; }
-public string CurrentSubLocation { get; private set; }
-public int ShieldingLevel { get; private set; }
-public bool VRPreviewEnabled { get; private set; }
-```
-These store the current state of the app:
-- `CurrentSelection` -- which planet is selected (the `?` means it can be null/nothing)
-- `CurrentSubLocation` -- which moon is selected (null if none)
-- `ShieldingLevel` -- 0 (Off), 1 (Low), 2 (Medium), or 3 (High)
-- `VRPreviewEnabled` -- is the VR preview toggle on?
+**`SubLocation` class** — Simple data holder with `name` (string) and `parent` (SpaceEnvironment). Marked `[System.Serializable]`.
 
-`private set` means only GameManager can change these values. Other scripts can read them but not write them directly -- they must call the public methods instead.
+**`SubLocationDatabase` static class** — Lazy-initialized dictionary mapping `SpaceEnvironment` to `List<SubLocation>`. Only two entries:
+- Earth → [Moon, ISS]
+- Jupiter → [Io, Europa, Ganymede]
 
-#### Events (Observer Pattern)
-```csharp
-public event Action<SpaceEnvironment> OnLocationChanged;
-public event Action<string> OnSubLocationChanged;
-public event Action<int> OnShieldingChanged;
-public event Action<bool> OnVRPreviewChanged;
-```
-Events are like **mailing lists**. Other scripts subscribe to them:
-```csharp
-// In SystemMapUI.Start():
-GameManager.Instance.OnLocationChanged += OnLocationChanged;
-```
-Now whenever a planet is selected, SystemMapUI's `OnLocationChanged` method gets called automatically. This is how the UI knows to update without GameManager needing to know anything about the UI.
+The `Data` property calls `BuildDatabase()` on first access. `GetSubLocations(env)` returns the list or an empty list if the planet has no moons.
 
-The `?.Invoke()` syntax means "only fire this event if someone is actually subscribed" (prevents crashes).
+**`SpaceLocation` MonoBehaviour** — Attached to planet GameObjects. Single field: `environment` (SpaceEnvironment). Used by `ClickDetector` to identify what was clicked.
 
-#### SelectLocation Method
-```csharp
-public void SelectLocation(SpaceEnvironment env) {
-    DisableAllTiers();
-    // Enable the correct tier object based on planet
-    CurrentSelection = env;
-    CurrentSubLocation = null;  // clear moon selection
-    OnLocationChanged?.Invoke(env);  // notify all subscribers
-}
-```
-Called when a planet is clicked. Updates state and notifies all listeners.
+**`SubLocationMarker` MonoBehaviour** — Attached to moon GameObjects. Fields: `subLocationName` (string), `parentEnvironment` (SpaceEnvironment). Also used by `ClickDetector`.
 
-#### Tier System
-```csharp
-public string GetTierName(SpaceEnvironment env) { ... }
-```
-Returns "Extreme", "High", "Medium", or "Low" based on planet. This represents the general danger/difficulty tier.
+### GameManager.cs (80 lines)
 
-#### VR Tier System
-```csharp
-public int GetVRTierLevel(SpaceEnvironment env) { ... }
-public int GetMoonVRTierLevel(string moonName, SpaceEnvironment parent) { ... }
-```
-Returns 0-3 representing the maximum feasible VR quality at each location:
+Central state manager. Singleton via `Instance = this` in `Awake()`.
 
-| Level | Name   | Locations                                    |
-|-------|--------|----------------------------------------------|
-| 0     | None   | Sun, Jupiter, Io                             |
-| 1     | Low    | Mercury, Venus, Saturn, Uranus, Neptune, most distant moons |
-| 2     | Medium | Mars, Phobos, Deimos, Europa, Titan          |
-| 3     | High   | Earth, Moon, ISS                             |
+**State properties** (all have `{ get; private set; }`):
+- `CurrentSelection` (`SpaceEnvironment?`) — nullable, null until first click
+- `CurrentSubLocation` (`string`) — null when a planet is selected, set when a moon is selected
+- `ShieldingLevel` (`int`) — 0, 1, or 2 (LOW/MED/HIGH)
+- `HardwareClassIndex` (`int`) — 0-3, defaults to 3 (COTS)
+- `MissionDuration` (`int`) — 1-20 years, defaults to 1
+- `VRPreviewEnabled` (`bool`) — toggle state
+- `CurrentResult` (`FidelityResult`) — last computed result
+
+**Static data**: `ShieldingNames` string array: { "LOW", "MEDIUM", "HIGH" }
+
+**Events** (all `Action<T>`):
+- `OnLocationChanged` — fires when a planet is selected
+- `OnSubLocationChanged` — fires when a moon is selected
+- `OnShieldingChanged` — fires when shielding slider moves
+- `OnHardwareChanged` — fires when hardware button is clicked
+- `OnMissionDurationChanged` — fires when mission slider moves
+- `OnVRPreviewChanged` — fires when VR toggle flips
+- `OnFidelityChanged` — fires after every recalculation with the new FidelityResult
+
+**Methods**:
+- `SelectLocation(SpaceEnvironment env)` — Sets `CurrentSelection`, clears `CurrentSubLocation` to null, fires `OnLocationChanged`, calls `RecalculateFidelity()`.
+- `SelectSubLocation(string name)` — Sets `CurrentSubLocation`, fires `OnSubLocationChanged`, calls `RecalculateFidelity()`.
+- `SetShieldingLevel(int level)` — Clamps to 0-2, fires event, recalculates.
+- `SetHardwareClass(int index)` — Clamps to 0-3, fires event, recalculates.
+- `SetMissionDuration(int years)` — Clamps to 1-20, fires event, recalculates.
+- `SetVRPreview(bool enabled)` — Sets state, fires event. Does NOT recalculate (preview is display-only).
+- `RecalculateFidelity()` — Private. Guards on `CurrentSelection.HasValue`. Calls `RadiationCalculator.Calculate()` with all 5 parameters. Stores result in `CurrentResult`. Fires `OnFidelityChanged`.
+
+Every setter that affects the calculation triggers `RecalculateFidelity()`. This is the core pattern — any input change immediately produces a new output.
+
+### RadiationCalculator.cs (219 lines)
+
+Static utility class. No MonoBehaviour, no instance. All methods are `public static`.
+
+**Data structures** — Private `[System.Serializable]` classes matching the JSON structure:
+- `DosimetryEntry` (id, name, tid, tid_min, tid_max, dominant_source, confidence)
+- `DosimetryTable` (locations array wrapper)
+- `ShieldingEntry` (id, name, label, areal_density_gcm2, gcr, spe, trapped_electrons)
+- `ShieldingTable` (levels array wrapper)
+- `HardwareEntry` (id, name, short_name, examples, gflops, tid_tolerance_krad, overhead_factor)
+- `HardwareTable` (classes array wrapper)
+- `FidelityEntry` (tier, name, short_name, gflops_min)
+- `FidelityTable` (tiers array wrapper)
+
+**Static cached data**:
+- `dosimetryMap` — Dictionary<string, DosimetryEntry> keyed by ID
+- `shieldingLevels` — ShieldingEntry[]
+- `hardwareClasses` — HardwareEntry[]
+- `fidelityTiers` — FidelityEntry[]
+- `locationIdMap` — Dictionary<string, string> mapping app names to dosimetry IDs
+- `loaded` — bool flag for lazy init
+
+**Public constants**:
+- `HardwareIds` = { "radhard_legacy", "radhard_modern", "fpga", "cots" }
+- `HardwareNames` = { "Legacy RH", "Modern RH", "FPGA", "COTS" }
+
+**`EnsureLoaded()`** — Called at the start of every public method. Loads 4 JSON files via `Resources.Load<TextAsset>()` and parses them with `JsonUtility.FromJson<T>()`. Builds the `dosimetryMap` dictionary. Hardcodes the `locationIdMap` (13 entries mapping app names to dosimetry IDs). Sets `loaded = true`. Only runs once.
+
+**`GetDosimetryId(SpaceEnvironment env, string moonName)`** — Returns the dosimetry table key. If `moonName` is provided, uses that as the lookup key. Otherwise uses `env.ToString()`. Returns null if not found.
+
+**`Calculate(SpaceEnvironment env, string moonName, int shieldingIndex, int hardwareIndex, int missionYears)`** — The core algorithm. Returns a `FidelityResult` struct. Full algorithm detailed in its own section below.
+
+**`FormatLifespan(float years)`** — Formats lifespan for display:
+- Negative → "N/A"
+- >= half of float.MaxValue → "Indefinite"
+- >= 1000 → "~1,234 yrs" (with commas)
+- >= 1 → "~1.5 yrs" (one decimal)
+- >= 1 day → "~45 days"
+- Otherwise → "~12 hrs"
+
+**`FidelityResult` struct** (defined at top of file, outside the class):
+- `tierLevel` (int, 0-3)
+- `tierName` (string, e.g., "Modern VR")
+- `tierShortName` (string, e.g., "HIGH")
+- `lifespanYears` (float, -1 if N/A)
+- `effectiveTID` (float, krad/yr after shielding)
+- `totalMissionDose` (float, krad over full mission)
+- `missionDurationYears` (int)
+- `effectiveGFLOPS` (float, after overhead)
+- `hardwareSurvives` (bool)
+- `hardwareName` (string)
+- `locationName` (string)
+
+### SolarSystemBuilder.cs (252 lines)
+
+Builds the 3D solar system from `solar_system.json`. Singleton via `Instance = this` in `Awake()`.
+
+**Private JSON classes**: `PlanetJson`, `MoonJson`, `SolarSystemJson` — match the JSON structure. Marked `[Serializable]`.
+
+**Public state**:
+- `PlanetObjects` — `Dictionary<SpaceEnvironment, GameObject>` mapping enum values to their planet spheres
+- `HasMoons(env)` — returns true if the planet has a moon container
+- `IsExpanded(env)` — returns true if the planet's moons are currently visible
+
+**Private state**:
+- `moonContainers` — Dictionary mapping each planet to its moon container GameObject
+- `planetSpinSpeeds` — Dictionary of rotation speeds per planet
+- `expandedPlanet` — Which planet's moons are currently showing (nullable)
+- `animatingPlanet`, `animatingOpen`, `animProgress`, `animDuration` — Animation state
+
+**`Start()` → `BuildSolarSystem()`**:
+1. Loads `solar_system.json` via `Resources.Load<TextAsset>`
+2. Parses with `JsonUtility.FromJson<SolarSystemJson>`
+3. Creates a root `"SolarSystem_Generated"` GameObject
+4. For each planet: creates a sphere via `CreateSphere()`, positions at `(distance, 0, 0)`, adds `SpaceLocation` component with the enum value, adds `SphereCollider`, stores in `PlanetObjects` dictionary
+5. Groups moons by parent planet. For each group: creates a container positioned at the parent's X, creates moon spheres inside it. Each moon gets a `SubLocationMarker` component and `SphereCollider`. Moons are spaced vertically: first at `startY = -(planetRadius + 3.0)`, then each 1.4 units lower.
+6. All moon containers start as `SetActive(false)` — hidden until expanded.
+
+**`CreateSphere(name, radius, color)`** — Creates a `PrimitiveType.Sphere`, sets `localScale = Vector3.one * radius * 2f` (radius to diameter), creates a new Standard shader material, sets its color. Returns the GameObject.
+
+**`ParseEnv(string name)`** — Converts planet name string to `SpaceEnvironment` enum via `Enum.Parse`. This is why JSON planet names must exactly match enum names.
+
+**`ParseColor(float[] c)`** — Converts a 3-element float array to a Unity `Color`.
+
+**`Update()` — Three things happen every frame**:
+1. **Planet spin**: Each planet rotates around its local Y axis at its `spin_speed` degrees/second.
+2. **Moon spin**: All visible moons rotate at 20 deg/sec around their local Y axis.
+3. **Animation tick**: If an animation is in progress, advances `animProgress` by `Time.deltaTime / animDuration`. Calls `UpdateAnimation()` or `FinishAnimation()`.
+
+**Dropdown Animation System** (detailed in its own section):
+- `ToggleMoons(env)` — Entry point. If already expanded, closes. If another is expanded, immediately hides it (no animation) then opens the new one. Blocks while animating.
+- `StartAnimation(env, opening)` — Sets up animation state, activates container if opening.
+- `UpdateAnimation()` — Computes eased progress `t = 1 - (1 - progress)³` (ease-out cubic). Calls `SetMoonContainerScale`.
+- `FinishAnimation()` — Snaps to final state, deactivates if closing, clears animation state.
+- `SetMoonContainerScale(env, t)` — Sets container's Y-scale to `t` and sets each moon renderer's material alpha to `t`. This creates a "fold down from planet" effect.
+
+### ClickDetector.cs (34 lines)
+
+Attached to the Main Camera. Has an optional `[SerializeField]` reference to `SystemMapUI`.
+
+**`Update()`**:
+1. Checks `Input.GetMouseButtonDown(0)` (left click)
+2. Guards against UI click-through: `EventSystem.current.IsPointerOverGameObject()` — if true, the click is on a UI element, so ignore it
+3. Casts a ray from the camera through the mouse position: `Camera.main.ScreenPointToRay(Input.mousePosition)`
+4. If the ray hits something:
+   - First checks for `SubLocationMarker` (moon). If found: selects the parent planet via `GameManager.Instance.SelectLocation(moon.parentEnvironment)`, then the moon via `SelectSubLocation(moon.subLocationName)`. Returns.
+   - Then checks for `SpaceLocation` (planet). If found: selects via `GameManager.Instance.SelectLocation`. Also calls `systemMapUI.ExpandPlanet()` to toggle moon dropdown.
+
+Moon check comes first because moons are children of containers that overlap with planets spatially.
+
+### SystemMapUI.cs (966 lines)
+
+The largest file. Builds the entire UI programmatically — no prefabs, no editor setup.
+
+**Color Palette** (static readonly):
+- `PanelBg` — very dark blue-gray, 85% opacity: `(0.05, 0.05, 0.08, 0.85)`
+- `GoldText` — warm gold: `(0.9, 0.75, 0.3)`
+- `GoldHighlight` — brighter gold for emphasis: `(1.0, 0.85, 0.4)`
+- `DimText` — muted gold for labels: `(0.5, 0.45, 0.3)`
+- `ButtonNormal` — dark for button backgrounds: `(0.1, 0.1, 0.14, 0.9)`
+- `ArrowBg` — slightly lighter for dropdown arrows: `(0.12, 0.12, 0.16, 0.95)`
+- `ToggleOn` — gold for active state: `(0.8, 0.65, 0.2)`
+- `ToggleOff` — gray for inactive: `(0.25, 0.25, 0.28)`
+- `SliderFill` — gold: `(0.8, 0.65, 0.2)`
+- `SliderBg` — dark: `(0.15, 0.15, 0.18)`
+
+**Instance variables**:
+- Canvas and its RectTransform
+- Text references: `tierInfoText` (top bar right), `selectionNameText` (info panel header), `selectionDetailText` (info panel body)
+- Shielding slider + value text, Mission slider + value text
+- VR preview state: `vrToggleOn` bool, `previewCamera`, `previewRenderTex`, `tierPreviewObjects[4]`, `previewDisplay`, `previewLabel`, `previewCanvasGroup`
+- Hardware button arrays: `hardwareButtonImages[4]`, `hardwareButtonTexts[4]`
+- Dropdown arrows: `List<DropdownArrow>`, `arrowsBuilt` flag
+
+**`Start()`**:
+1. Calls `BuildUI()` — constructs the Canvas and all UI panels
+2. Calls `SetupPreviewScene()` — creates the offscreen preview camera, light, and 4 tier models
+3. Subscribes to `GameManager` events: `OnLocationChanged`, `OnSubLocationChanged`, `OnFidelityChanged`
+4. If a selection already exists (unlikely at start), updates UI
+5. Hides preview section (alpha = 0)
+6. Highlights the default hardware button (index 3 = COTS)
+
+**`BuildUI()`** — Creates:
+1. A `Canvas` with `ScreenSpaceOverlay` render mode, sorting order 10
+2. A `CanvasScaler` at 1920x1080 reference resolution, `matchWidthOrHeight = 0.5f`
+3. A `GraphicRaycaster` for UI interaction
+4. Calls `BuildTopBar()`, `BuildSettingsSidebar()`, `BuildSelectionInfo()`, `BuildBackButton()`
+
+**`BuildTopBar(parent)`** — Full-width panel anchored to top. 60px tall.
+- Left side: "SOL SYSTEM MAP" title, 24pt bold gold
+- Right side: `tierInfoText` showing selection info or "CLICK A PLANET OR MOON" placeholder
+
+**`BuildSelectionInfo(parent)`** — Panel anchored to bottom-right corner. 380x210px.
+- Uses `VerticalLayoutGroup` for auto-stacking
+- Header: `selectionNameText` — 22pt bold bright gold
+- Separator line
+- Body: `selectionDetailText` — 15pt dim gold, shows type/TID/dose/fidelity/lifespan
+
+**`BuildSettingsSidebar(parent)`** — Left sidebar. 300px wide, anchored from 10% to 93% of screen height.
+- `VerticalLayoutGroup` with 10px spacing and 18px padding
+- Title: "PARAMETERS" in 22pt bold gold
+- Then 4 parameter sections separated by gold separator lines:
+  1. **SHIELDING LEVEL** — label, italic description, slider (0-2, whole numbers), value text showing "LOW"/"MED"/"HIGH"
+  2. **MISSION DURATION** — label, italic description, slider (1-20, whole numbers), value text showing "X YR"
+  3. **HARDWARE CLASS** — label, italic description, 4 radio buttons in a `HorizontalLayoutGroup` (LEGACY RH / MODERN RH / FPGA / COTS)
+  4. **VR PREVIEW** — label, italic description, toggle button (ON/OFF) with preview section below
+
+Each parameter has an italic 13pt description explaining what it does:
+- Shielding: "Spacecraft hull thickness / reducing radiation exposure"
+- Mission Duration: "Total years of operation / at the selected location"
+- Hardware Class: "Onboard compute hardware / for VR rendering"
+- VR Preview: "Shows max feasible VR tier / for the selected location"
+
+**Preview Section** — Inside the sidebar, below VR toggle. Uses a `CanvasGroup` with alpha=0 (hidden until VR toggle is ON).
+- `previewLabel`: "FIDELITY: --" text, updated to "FIDELITY: NONE/LOW/MEDIUM/HIGH"
+- `previewDisplay`: `RawImage` showing the `RenderTexture` from the preview camera. 264x220px with a gold `Outline`.
+
+**`BuildShieldingSlider(parent)`** — Constructs a Unity `Slider` entirely in code:
+- Background bar (30%-70% vertical anchors for thin appearance)
+- Fill area + fill image (gold)
+- Handle slide area + handle (28x28px gold square)
+- Links: `shieldingSlider.fillRect = fillRT`, `handleRect = handleRT`
+- Value text below: shows "LOW" at 0, "MED" at 1, "HIGH" at 2
+- `onValueChanged` listener: updates label, calls `GameManager.SetShieldingLevel()`
+
+**`BuildMissionSlider(parent)`** — Same structure as shielding slider but range 1-20. Value text shows "X YR". Calls `GameManager.SetMissionDuration()`.
+
+**`BuildHardwareSelector(parent)`** — 4 buttons in a `HorizontalLayoutGroup`:
+- Each button: `Image` background (ToggleOff color) + centered `TMP_Text` label (11pt bold)
+- Labels come from `RadiationCalculator.HardwareNames[i].ToUpper()`
+- On click: calls `GameManager.SetHardwareClass(index)` and `UpdateHardwareButtons(index)`
+- `UpdateHardwareButtons(selectedIndex)`: loops through all 4, sets selected to ToggleOn/GoldText, others to ToggleOff/DimText
+
+**`BuildVRToggle(parent)`** — `HorizontalLayoutGroup` with:
+- A 64x34px toggle box (`Image` that changes color)
+- A "OFF"/"ON" status text
+- On click: flips `vrToggleOn`, updates colors/text, calls `GameManager.SetVRPreview()`, shows/hides preview section via `CanvasGroup.alpha`, calls `RefreshVRPreview()` if turning on
+
+**`BuildPreviewDisplay(parent)`** — Creates a `RawImage` (264x220px) with a gold `Outline` effect. The `RenderTexture` is assigned later in `SetupPreviewScene()`.
+
+**`BuildBackButton(parent)`** — 130x48px button anchored to bottom-left. Shows "BACK" in gold. Has a `Button` component but no click handler is wired up (placeholder).
+
+**`BuildDropdownArrows()`** — Called once from `LateUpdate()` when `SolarSystemBuilder` is ready. For each planet that has moons:
+- Creates a 48x36px button with the ▼ arrow character
+- Anchored at canvas center (0.5, 0.5) — position is updated every frame in `LateUpdate()`
+- Stores a `DropdownArrow` struct with references to the planet object, button RectTransform, and arrow text
+- On click: calls `SolarSystemBuilder.ToggleMoons(capturedEnv)`
+- Uses variable capture: `SpaceEnvironment capturedEnv = env` to avoid closure-over-loop-variable bug
+
+**`LateUpdate()` — Runs every frame after `Update()`**:
+1. **Lazy arrow build**: If arrows haven't been built and `SolarSystemBuilder` is ready, builds them. This deferred approach avoids a race condition — `SystemMapUI.Start()` runs before `SolarSystemBuilder.Start()` finishes building planets.
+2. **Arrow position tracking**: For each dropdown arrow, converts the planet's world position to canvas space:
+   - Calculates world position: planet center + down * (radius + 0.5)
+   - `Camera.main.WorldToScreenPoint(worldPos)` → screen pixels
+   - `RectTransformUtility.ScreenPointToLocalPointInRectangle(canvasRT, screenPos, null, out canvasPos)` → canvas local coordinates
+   - Sets `arrow.buttonRT.anchoredPosition = canvasPos`
+   - Hides arrow if behind camera (`screenPos.z < 0`)
+   - Updates arrow text: ▲ if expanded, ▼ if collapsed
+3. **Preview rotation**: If VR toggle is on, rotates the active preview model at 45 deg/sec around its local Y axis.
+
+**`OnDestroy()`** — Unsubscribes from all GameManager events. Releases the `RenderTexture`.
+
+**`ExpandPlanet(env)`** — Public method called by `ClickDetector`. Delegates to `SolarSystemBuilder.ToggleMoons()`.
+
+**Event handlers**:
+
+**`OnLocationChanged(env)`** — Sets `selectionNameText` to planet name (uppercase). Shows "Type: Planet" + sub-location count + "Calculating...".
+
+**`OnSubLocationChanged(subName)`** — Sets `selectionNameText` to moon name (uppercase). Shows "Type: Moon" + "Calculating...".
+
+**`OnFidelityChanged(result)`** — The main display update. Called after every recalculation.
+- Determines location name (moon name if selected, else planet name)
+- Formats lifespan via `RadiationCalculator.FormatLifespan()`
+- Checks `willFail`: true if `lifespanYears > 0 && lifespanYears < missionDurationYears`
+- **Top bar**: Shows `"LOCATION  |  lifespan"`. If failing, shows `"<color=#FF4444>FAILS AT YEAR X</color>"` in red using TMP rich text.
+- **Info panel**: Shows Type, Eff. TID (3 decimal krad/yr), Mission Dose (2 decimal krad), Fidelity (name + short), Lifespan. If hardware fails, appends red warning.
+- Calls `RefreshVRPreview()` to update the 3D preview.
+
+**Utility methods**:
+- `CreatePanel(parent, name, color)` — Creates a `GameObject` with `RectTransform` and `Image`. Returns the `RectTransform`.
+- `CreateText(parent, name, text, fontSize, color)` — Creates a `GameObject` with `RectTransform`, `TextMeshProUGUI`, and `LayoutElement`. Sets text, fontSize, color, richText=true.
+- `CreateSeparator(parent)` — 1px tall gold line at 30% opacity.
+- `CreateSpacer(parent, height)` — Empty element with `LayoutElement.preferredHeight` for spacing.
 
 ---
 
-### 3.3 ClickDetector.cs
+## 3D Model Assets
 
-Handles **mouse input** -- detects when the user clicks on 3D objects.
+Four model folders under `Assets/Resources/Models/`:
 
-#### Update Loop
-```csharp
-void Update() {
-    if(Input.GetMouseButtonDown(0)) { ... }
-}
-```
-`Update()` runs **every single frame** (60 times per second at 60fps). `GetMouseButtonDown(0)` returns true only on the exact frame the left mouse button is pressed.
+### ErrorText (Tier 0 — NONE)
+- `ERRORText.fbx` — A 3D "ERROR" text mesh
+- `ERRORText_typeBlinn_BaseColor.jpeg` — Color texture
+- `ERRORText_typeBlinn_Emissive.jpeg` — Emissive glow texture
+- Loaded by `LoadErrorTextModel()` with special handling: scales to fit 1.2 world units, centers on preview point, applies emissive material
 
-#### UI Guard
-```csharp
-if(EventSystem.current.IsPointerOverGameObject())
-    return;
-```
-**Critical check**: if the mouse is over a UI element (like the sidebar or a button), DON'T process the click as a 3D world click. Without this, clicking the shielding slider would also select whatever planet is behind it.
+### Mario (Tier 1 — LOW / Wireframe VR)
+- `mario.obj` + `mario.mtl` — OBJ model
+- Multiple textures: body, eyes, hair, mustache, overalls, shoes, etc.
+- Loaded by `LoadPreviewModel()` with `bustFraction = 0.45` (shows nearly half the model)
 
-#### Raycasting
-```csharp
-Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-RaycastHit hit;
-if(Physics.Raycast(ray, out hit)) { ... }
-```
-**Raycasting** = shooting an invisible laser beam from the camera through the mouse cursor into the 3D world. Think of it as pointing a laser pointer at the screen.
+### CounterStrike (Tier 2 — MED / Textured VR)
+- `COUNTER-TERRORIST_GIGN.obj` + `.mtl` — CS 1.6 GIGN counter-terrorist
+- `GIGN_DMBASE2.png` — Body texture
+- `Backpack2.png` — Backpack texture
+- Loaded with `bustFraction = 0.28` (tight bust — head and shoulders only)
+- Texture mapping in `ApplyModelTextures()`: matches material names containing "GIGN_DMBASE2" or "Backpack2"
 
-- `Camera.main` -- the main camera in the scene
-- `ScreenPointToRay(Input.mousePosition)` -- creates a ray from the camera through where the mouse is on screen
-- `Physics.Raycast(ray, out hit)` -- asks Unity's physics engine "does this ray hit anything with a Collider?" If yes, `hit` contains info about what was hit
-
-#### Moon vs Planet Check
-```csharp
-SubLocationMarker moon = hit.collider.GetComponent<SubLocationMarker>();
-if(moon != null) {
-    GameManager.Instance.SelectLocation(moon.parentEnvironment);
-    GameManager.Instance.SelectSubLocation(moon.subLocationName);
-    return;  // stop here, don't also check for planet
-}
-
-SpaceLocation location = hit.collider.GetComponent<SpaceLocation>();
-if(location != null) {
-    GameManager.Instance.SelectLocation(location.environment);
-}
-```
-First checks if the hit object is a moon (has SubLocationMarker). If yes, select both the parent planet AND the moon. The `return` stops execution so we don't double-process.
-
-If it's not a moon, checks if it's a planet (has SpaceLocation). If yes, select the planet.
-
-If it's neither (hit some random object), nothing happens.
+### DoomSlayer (Tier 3 — HIGH / Modern VR)
+- `doommarine.obj` + `.mtl` — Doom 3 marine model
+- 6 body part textures (arms, cowl, helmet, legs, torso, visor), each with `_c` (color), `_n` (normal), `_s` (specular), `_mask` variants
+- Only `_c` (color) textures are used by the runtime texture applicator
+- Loaded with `bustFraction = 0.28` (tight bust)
+- Texture mapping: matches material names containing part names (e.g., "doommarine_arms" → "models_characters_doommarine_doommarine_arms_c")
 
 ---
 
-### 3.4 SolarSystemBuilder.cs
+## Application Flow
 
-Creates all the **3D planet and moon spheres** when you press Play. Also handles spinning and dropdown animation.
+### Startup Sequence
 
-#### Data Structs
-```csharp
-private struct PlanetDef {
-    public SpaceEnvironment env;   // which planet
-    public float distance;          // X position (distance from Sun)
-    public float radius;            // size of the sphere
-    public Color color;             // RGB color
-    public float spinSpeed;         // rotation speed (degrees/second)
-}
-```
-A **struct** is a lightweight data container (like a recipe card). Each planet is defined by these 5 properties. There's a similar `MoonDef` for moons (without distance/spinSpeed).
+1. **Unity loads the scene**. The scene has 3 GameObjects with scripts attached:
+   - One with `GameManager` — `Awake()` sets `Instance`, defaults `HardwareClassIndex=3`, `MissionDuration=1`
+   - One with `SystemMapUI` — `Start()` builds UI, sets up preview
+   - Main Camera with `ClickDetector` — has `[SerializeField]` reference to `SystemMapUI`
 
-#### Planet Definitions
-```csharp
-PlanetDef[] planets = new PlanetDef[] {
-    new PlanetDef(SpaceEnvironment.Sun,    0f,   3.0f,  yellowColor,   2f),
-    new PlanetDef(SpaceEnvironment.Mercury, 5f,  0.3f,  grayColor,    15f),
-    // ... all 9 planets
-};
-```
-All planets hardcoded with their properties. The Sun is at X=0, Mercury at X=5, Earth at X=12, Neptune at X=45. Sizes roughly reflect real relative sizes. Spin speeds vary -- Jupiter spins fastest (25 deg/s), Uranus spins in reverse (-18 deg/s, which is astronomically accurate!).
+2. **`SolarSystemBuilder.Awake()`** — Sets its singleton. `Start()` loads `solar_system.json`, creates 8 planet spheres and 5 moon spheres (in 2 containers, initially hidden).
 
-#### Creating Planets (BuildSolarSystem)
-For each planet definition:
+3. **`SystemMapUI.Start()`** — Builds the Canvas, sidebar, info panel, top bar, back button. Creates the preview camera/models at position (1000, 1000, 1000). Subscribes to GameManager events.
 
-1. **Create a sphere**: `GameObject.CreatePrimitive(PrimitiveType.Sphere)` -- Unity makes a basic sphere mesh
-2. **Scale it**: `transform.localScale = Vector3.one * radius * 2f` -- diameter = radius * 2
-3. **Position it**: `transform.position = new Vector3(p.distance, 0, 0)` -- along the X axis
-4. **Color it**: Create a new Material with the Standard shader, set its color
-5. **Add nametag**: `AddComponent<SpaceLocation>()` -- attach the "I am Earth" component
-6. **Make clickable**: `AddComponent<SphereCollider>()` -- without this, raycasts pass through
+4. **First `LateUpdate()`** — Detects that `SolarSystemBuilder` is ready, builds dropdown arrow buttons for Earth and Jupiter (the planets with moons).
 
-The Sun gets special treatment: `mat.EnableKeyword("_EMISSION")` makes it glow.
+### User Click Flow
 
-#### Creating Moons
-Moons are grouped by parent planet using a Dictionary. For each planet's moons:
+1. User clicks on a planet sphere (e.g., Jupiter)
+2. `ClickDetector.Update()` fires a raycast, hits the sphere's `SphereCollider`
+3. Gets the `SpaceLocation` component → `location.environment` = `SpaceEnvironment.Jupiter`
+4. Calls `GameManager.Instance.SelectLocation(SpaceEnvironment.Jupiter)`:
+   - Sets `CurrentSelection = Jupiter`, clears `CurrentSubLocation = null`
+   - Fires `OnLocationChanged(Jupiter)` → `SystemMapUI.OnLocationChanged()` updates text
+   - Calls `RecalculateFidelity()`:
+     - Calls `RadiationCalculator.Calculate(Jupiter, null, shieldingLevel, hwIndex, missionYears)`
+     - `EnsureLoaded()` loads JSON on first call
+     - Algorithm runs (see next section)
+     - Result stored in `CurrentResult`
+     - Fires `OnFidelityChanged(result)` → `SystemMapUI.OnFidelityChanged()` updates all display
+5. `ClickDetector` also calls `systemMapUI.ExpandPlanet(Jupiter)` → `SolarSystemBuilder.ToggleMoons(Jupiter)` starts moon dropdown animation
 
-1. Create a **container** GameObject (empty parent) positioned at the planet's X
-2. Create each moon sphere inside the container
-3. Position moons in a **vertical column** below the planet: `localPosition = new Vector3(0, yPos, 0)`
-4. Attach `SubLocationMarker` component (the moon nametag)
-5. **Hide the container**: `container.SetActive(false)` -- moons start hidden
+### Parameter Change Flow
 
-When we want to show/hide moons, we just toggle the container. All moons inside show/hide together.
-
-#### Spinning (Update)
-```csharp
-void Update() {
-    // Spin planets
-    foreach(var kvp in PlanetObjects) {
-        kvp.Value.transform.Rotate(Vector3.up, speed * Time.deltaTime, Space.Self);
-    }
-    // Spin visible moons
-    foreach(var kvp in moonContainers) {
-        if(kvp.Value.activeSelf) {
-            foreach(Transform child in kvp.Value.transform) {
-                child.Rotate(Vector3.up, 20f * Time.deltaTime, Space.Self);
-            }
-        }
-    }
-}
-```
-Every frame, rotate every planet around its Y axis. `Time.deltaTime` is the time since the last frame (~0.016s at 60fps). Multiplying by deltaTime makes rotation **framerate-independent** -- same visual speed whether you get 30fps or 144fps.
-
-Moons only spin if their container is active (visible).
-
-#### Dropdown Animation
-
-The animation system uses a simple **0-to-1 progress** value:
-
-```csharp
-private float animProgress;     // goes from 0.0 to 1.0
-private float animDuration = 0.35f;  // takes 0.35 seconds
-```
-
-Each frame during animation:
-```csharp
-animProgress += Time.deltaTime / animDuration;
-```
-This adds a fraction each frame. After 0.35 seconds total, it reaches 1.0.
-
-**Ease-out curve** (smooth deceleration):
-```csharp
-float t = 1f - Mathf.Pow(1f - animProgress, 3f);
-```
-Instead of linear motion (constant speed), this math creates a curve that starts fast and slows down:
-- At progress 0.0: t = 0.0 (start)
-- At progress 0.5: t = 0.875 (already 87.5% there!)
-- At progress 1.0: t = 1.0 (done)
-
-The actual visual effect:
-```csharp
-container.transform.localScale = new Vector3(1f, t, 1f);
-```
-Scales the Y axis from 0 to 1. At t=0, moons are squished flat. At t=1, they're full size. This creates a smooth "sliding down from the planet" effect.
-
-Moon alpha (transparency) also fades in:
-```csharp
-Color c = rend.material.color;
-c.a = t;  // alpha goes 0 to 1
-rend.material.color = c;
-```
-
-**One-at-a-time rule**: When opening a new dropdown, the previous one closes instantly first. The `animatingPlanet` flag prevents interrupting an in-progress animation.
+1. User drags mission duration slider to 10
+2. `missionSlider.onValueChanged` fires
+3. Updates label to "10 YR"
+4. Calls `GameManager.Instance.SetMissionDuration(10)`:
+   - Sets `MissionDuration = 10`, fires `OnMissionDurationChanged(10)`
+   - Calls `RecalculateFidelity()` with new mission years
+   - New `FidelityResult` produced (different `totalMissionDose`, possibly different `hardwareSurvives`)
+   - Fires `OnFidelityChanged` → UI updates
 
 ---
 
-### 3.5 SystemMapUI.cs
+## The Radiation Algorithm
 
-The **biggest file**. Builds the entire 2D user interface in code at runtime. No prefabs needed.
+`RadiationCalculator.Calculate()` step by step:
 
-#### Color Palette
-```csharp
-private static readonly Color PanelBg      = new Color(0.05f, 0.05f, 0.08f, 0.85f);
-private static readonly Color GoldText      = new Color(0.9f, 0.75f, 0.3f, 1f);
-private static readonly Color GoldHighlight = new Color(1f, 0.85f, 0.4f, 1f);
-private static readonly Color DimText       = new Color(0.5f, 0.45f, 0.3f, 1f);
-// etc.
+**Input**: SpaceEnvironment, moonName, shieldingIndex (0-2), hardwareIndex (0-3), missionYears (1-20)
+
+**Step 1 — Initialize default result**:
 ```
-All colors defined in one place. `static readonly` means they're constants that never change. Colors are RGBA (Red, Green, Blue, Alpha) with values from 0 to 1. The panel background has 0.85 alpha = slightly transparent.
+tierLevel = 0, tierName = "Infeasible", tierShortName = "NONE"
+lifespanYears = -1, effectiveTID = 0, totalMissionDose = 0
+effectiveGFLOPS = 0, hardwareSurvives = false
+hardwareName = HardwareNames[hardwareIndex]
+```
 
-#### Canvas Setup
+**Step 2 — Look up dosimetry ID**:
+- If moonName is set (e.g., "Europa"), uses moonName as the key
+- If null, uses `env.ToString()` (e.g., "Jupiter")
+- Looks up in `locationIdMap` → "europa" or "jupiter_orbit"
+- If not found → returns early with "No Data"
+
+**Step 3 — Get dosimetry entry**:
+- Looks up the dosimetry ID in `dosimetryMap`
+- If `tid < 0` (Uranus) → returns "Unknown Radiation"
+
+**Step 4 — Apply shielding**:
+- Clamps `shieldingIndex` to valid range
+- Gets the shielding entry (Low/Medium/High)
+- Reads the reduction factor for the location's `dominant_source`:
+  - `"gcr"` → `shield.gcr`
+  - `"spe"` → `shield.spe`
+  - `"trapped_electrons"` → `shield.trapped_electrons`
+- `effectiveTID = tid × reductionFactor`
+
+**Step 5 — Compute mission dose**:
+- `totalMissionDose = effectiveTID × missionYears`
+
+**Step 6 — Get hardware**:
+- Clamps `hardwareIndex` to valid range
+- Gets the hardware entry
+
+**Step 7 — Compute lifespan**:
+- If `effectiveTID > 0`: `lifespanYears = tid_tolerance_krad / effectiveTID`
+- If zero: `lifespanYears = float.MaxValue` (indefinite)
+
+**Step 8 — Survivability check**:
+- If `totalMissionDose > tid_tolerance_krad`: hardware fails. Returns "Hardware Fails" with `hardwareSurvives = false`.
+- This check uses total dose over the full mission, not annual dose vs tolerance.
+
+**Step 9 — Compute effective GFLOPS**:
+- `effectiveGFLOPS = gflops / overhead_factor`
+- For Legacy Rad-Hard: 0.001 / 1.0 = 0.001
+- For Modern Rad-Hard: 3.7 / 1.0 = 3.7
+- For FPGA: 529.5 / 1.15 = 460.4
+- For COTS: 1567 / 1.0 = 1567
+
+**Step 10 — Determine fidelity tier**:
+- Iterates tiers from highest (3) to lowest (0)
+- Picks the first tier where `effectiveGFLOPS >= gflops_min`
+- Tier 3 (Modern VR) needs ≥567 GFLOPS → only COTS achieves this
+- Tier 2 (Textured VR) needs ≥0.2 → FPGA and Modern Rad-Hard achieve this
+- Tier 1 (Wireframe VR) needs ≥0.08 → Modern Rad-Hard achieves this (3.7 > 0.08)
+- Tier 0 (Infeasible) has gflops_min = -1 → always matches as fallback
+- Legacy Rad-Hard at 0.001 GFLOPS falls into Tier 0 (0.001 < 0.08)
+
+**Example**: Jupiter + Low Shielding + COTS + 1 Year
+- TID = 1000 krad/yr, dominant_source = trapped_electrons, shield factor = 1.0
+- effectiveTID = 1000 × 1.0 = 1000 krad/yr
+- totalMissionDose = 1000 × 1 = 1000 krad
+- COTS tolerance = 30 krad → 1000 > 30 → HARDWARE FAILS
+
+**Example**: Moon + High Shielding + COTS + 5 Years
+- TID = 0.012 krad/yr, dominant_source = gcr, shield factor = 0.8
+- effectiveTID = 0.012 × 0.8 = 0.0096 krad/yr
+- totalMissionDose = 0.0096 × 5 = 0.048 krad
+- COTS tolerance = 30 krad → 0.048 < 30 → SURVIVES
+- lifespanYears = 30 / 0.0096 = 3125 years
+- effectiveGFLOPS = 1567 → Tier 3 (Modern VR)
+
+---
+
+## UI System — How It All Gets Built
+
+Every UI element is created programmatically in `SystemMapUI.cs`. There are zero prefabs.
+
+### Canvas Setup
 ```csharp
 canvas = canvasGO.AddComponent<Canvas>();
 canvas.renderMode = RenderMode.ScreenSpaceOverlay;
 ```
-A **Canvas** is Unity's container for all 2D UI elements. `ScreenSpaceOverlay` means it draws flat on top of the 3D world, like a HUD in a video game. Everything UI must be inside a Canvas.
+ScreenSpaceOverlay means the UI renders on top of everything, not in world space. `sortingOrder = 10` ensures it's above other canvases.
+
+The `CanvasScaler` at 1920x1080 reference with `matchWidthOrHeight = 0.5f` means the UI scales based on an average of width and height scaling, so it looks reasonable on different aspect ratios.
+
+### Anchor System
+Every panel is positioned using RectTransform anchors:
+- **Top bar**: `anchorMin=(0,1), anchorMax=(1,1)` — stretches full width, pinned to top
+- **Sidebar**: `anchorMin=(0,0.10), anchorMax=(0,0.93)` — pinned to left, 10%-93% height
+- **Info panel**: `anchorMin=(1,0), anchorMax=(1,0)` — pinned to bottom-right corner
+- **Back button**: `anchorMin=(0,0), anchorMax=(0,0)` — pinned to bottom-left corner
+
+### Layout Groups
+The sidebar and info panel use `VerticalLayoutGroup` to auto-stack children vertically. The hardware selector uses `HorizontalLayoutGroup` to arrange buttons side-by-side. `LayoutElement.preferredHeight` controls how much space each child takes.
+
+### Slider Construction
+Each slider is built from scratch:
+1. Root GameObject with `Slider` component
+2. Background `Image` (dark bar, anchored to 30%-70% vertical for thin look)
+3. Fill area with `Fill` image (gold, stretches with slider value)
+4. Handle slide area with `Handle` image (28x28 gold square)
+5. Wire up: `slider.fillRect`, `slider.handleRect`, `slider.targetGraphic`
+6. Add `onValueChanged` listener
+
+This is more work than using a prefab but necessary without editor access.
+
+### Text Creation
+All text uses TextMeshPro (`TextMeshProUGUI`). The `CreateText()` helper:
+1. Creates a `GameObject`
+2. Adds `RectTransform` and `TextMeshProUGUI`
+3. Sets text, fontSize, color
+4. Enables `richText = true` (for `<color=...>` tags used in warnings)
+5. Adds a `LayoutElement` if one doesn't exist
+
+---
+
+## The VR Preview System
+
+A 3D model viewer embedded in the 2D UI sidebar, implemented via the RenderTexture trick.
+
+### How It Works
+
+1. **Offscreen camera** at position `(1000, 1000, 995)` looking forward (+Z). This is far from the main scene so nothing overlaps.
+2. **RenderTexture** (512x512, 2x antialiasing) captures what this camera sees.
+3. **RawImage** in the sidebar displays the RenderTexture.
+4. **Directional light** at `(998, 1003, 993)` angled at (30, -30, 0) illuminates the models.
+5. **4 model GameObjects** positioned at `(1000, 1000, 1000)` — one for each tier. Only one is active at a time.
+
+### Model Loading
+
+**Tier 0 (NONE)** — `LoadErrorTextModel(center)`:
+- Loads `Models/ErrorText/ERRORText` FBX via `Resources.Load<GameObject>`
+- If load fails or model has no renderers → returns null → fallback red sphere
+- Applies base color and emissive textures
+- Scales to fit 1.2 world units (measures bounds, computes scale factor)
+- Centers on preview point
+
+**Tiers 1-3** — `LoadPreviewModel(path, position, scale, bustFraction)`:
+- Loads model from Resources
+- If no renderers → returns null (triggers fallback primitive)
+- Applies textures via `ApplyModelTextures()`
+- **Bust framing**: Measures full model bounds, takes the top `bustFraction` portion (0.45 for Mario, 0.28 for CS and Doom), scales to fit `desiredSize = 0.9` units, then repositions so the bust center is at the preview point. This crops legs/lower body out of view.
+- Removes all colliders (prevents raycast interference)
+
+### Texture Application
+
+`ApplyModelTextures(instance, resourcePath)`:
+- Extracts the folder from the resource path
+- For each Renderer's materials: if no `mainTexture`, tries to match material name to a known texture name
+- Hardcoded mappings:
+  - CS: "GIGN_DMBASE2" → GIGN_DMBASE2 texture, "Backpack2" → Backpack2 texture
+  - Doom: 6 body parts (arms, cowl, helmet, legs, torso, visor) → their respective `_c` textures
+  - Error text: "typeBlinn" or ErrorText path → ERRORText_typeBlinn_BaseColor + emissive
+- Fallback: `Resources.LoadAll<Texture2D>(folder)` — grabs the first texture in the folder
+
+### Preview Updates
+
+- `RefreshVRPreview()` — If VR toggle is on, calls `ShowPreviewTier(tierLevel)`
+- `ShowPreviewTier(vrTierLevel)` — Activates the matching tier object, deactivates all others. Updates label text.
+- In `LateUpdate()` — Active preview objects rotate at 45 deg/sec around local Y (`Space.Self`)
+
+### Camera Settings
+- `fieldOfView = 20` — narrow FOV for a zoomed-in look
+- `clearFlags = SolidColor` — dark background `(0.03, 0.03, 0.06)`
+- `cullingMask = "Default"` layer — sees all default objects
+- `depth = -10` — renders before the main camera (doesn't matter since it uses a RenderTexture)
+
+---
+
+## The Dropdown Animation System
+
+When you click a planet or its dropdown arrow, moons appear/disappear with an animated fold-down effect.
+
+### Mechanics
+
+**Only one dropdown at a time.** If Jupiter's moons are showing and you click Earth, Jupiter's moons instantly hide (no animation) and Earth's moons animate open. This prevents visual clutter.
+
+**Animation blocks input.** While `animatingPlanet.HasValue`, `ToggleMoons()` returns immediately. This prevents double-clicks from breaking state.
+
+**Ease-out cubic curve**: `t = 1 - (1 - progress)³`
+- At progress=0: t=0 (start)
+- At progress=0.5: t=0.875 (already most of the way)
+- At progress=1: t=1 (end)
+- This means fast start, gentle landing.
+
+**Duration**: 0.35 seconds (`animDuration`).
+
+### Visual Effect
+
+`SetMoonContainerScale(env, t)`:
+- Sets the container's Y scale to `t`: `localScale = new Vector3(1, t, 1)`. Moons "unfold" vertically from the planet.
+- Sets each moon renderer's material alpha to `t`. Moons fade in simultaneously.
+- At t=0: container is flat and invisible. At t=1: container is full size and opaque.
+
+### State Machine
+
+```
+IDLE (no animation, expandedPlanet may or may not be set)
+  → ToggleMoons(env) called
+  → If same planet: StartAnimation(env, closing=false) → ANIMATING_CLOSE
+  → If different planet: instantly hide old, StartAnimation(env, opening=true) → ANIMATING_OPEN
+  → If no current: StartAnimation(env, opening=true) → ANIMATING_OPEN
+
+ANIMATING_OPEN
+  → Each frame: advance progress, apply ease-out, scale up
+  → At progress >= 1: FinishAnimation() → scale=1, expandedPlanet=env → IDLE
+
+ANIMATING_CLOSE
+  → Each frame: advance progress, apply ease-out, scale down
+  → At progress >= 1: FinishAnimation() → scale=0, deactivate, expandedPlanet=null → IDLE
+```
+
+---
+
+## Coordinate Conversion Trick
+
+The dropdown arrows are UI elements (2D canvas) that need to track 3D planets as the camera moves. This requires converting between coordinate systems:
+
+**World Space** → **Screen Space** → **Canvas Space**
 
 ```csharp
-CanvasScaler scaler = canvasGO.AddComponent<CanvasScaler>();
-scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-scaler.referenceResolution = new Vector2(1920, 1080);
-scaler.matchWidthOrHeight = 0.5f;
-```
-The **CanvasScaler** handles different screen sizes. "I designed this for 1920x1080. If the screen is smaller/bigger, scale everything proportionally." The 0.5 match means it balances between width and height scaling.
-
-```csharp
-canvasGO.AddComponent<GraphicRaycaster>();
-```
-Required for UI clicks to work. Without this, buttons wouldn't respond to mouse clicks.
-
-#### UI Element Creation Pattern
-
-Every UI element follows this pattern:
-
-```csharp
-// 1. Create a GameObject
-GameObject go = new GameObject("MyPanel");
-
-// 2. Parent it to the canvas (or another UI element)
-go.transform.SetParent(canvasRT, false);
-
-// 3. Add RectTransform (required for all UI elements)
-RectTransform rt = go.AddComponent<RectTransform>();
-
-// 4. Position it using anchors + offsets
-rt.anchorMin = new Vector2(0, 1);    // anchor point(s) on parent
-rt.anchorMax = new Vector2(1, 1);    // anchor stretches
-rt.sizeDelta = new Vector2(0, 60);   // size adjustments
-```
-
-#### Understanding Anchors
-
-Anchors are the most important concept for UI positioning. They define where an element "attaches" to its parent.
-
-Each anchor is a Vector2 with values 0-1:
-- (0,0) = bottom-left of parent
-- (1,1) = top-right of parent
-- (0.5, 0.5) = center of parent
-
-**Pinned to a corner** (anchorMin == anchorMax):
-```
-anchorMin = (0, 0), anchorMax = (0, 0)  --> pinned to bottom-left
-anchorMin = (1, 1), anchorMax = (1, 1)  --> pinned to top-right
-```
-
-**Stretched across an edge** (anchors span a range):
-```
-anchorMin = (0, 1), anchorMax = (1, 1)  --> stretches across the top
-anchorMin = (0, 0), anchorMax = (0, 1)  --> stretches along the left side
-```
-
-`sizeDelta` = extra size beyond what the anchors define. If anchors stretch full width, sizeDelta.x = 0 means "exactly the parent's width". sizeDelta.y = 60 means "60 pixels tall".
-
-`anchoredPosition` = offset from the anchor point.
-
-#### Layout Groups (Auto-Positioning)
-
-Instead of manually positioning every child element, **layout groups** auto-arrange children:
-
-```csharp
-VerticalLayoutGroup vlg = sidebar.AddComponent<VerticalLayoutGroup>();
-vlg.spacing = 10;        // 10px gap between each child
-vlg.padding = new RectOffset(18, 18, 18, 18);  // left, right, top, bottom padding
-```
-
-This says "stack all my children vertically with 10px gaps and 18px padding on all sides." Children are placed in order, top to bottom. Similar to CSS flexbox if you know web development.
-
-`HorizontalLayoutGroup` does the same but left-to-right.
-
-`LayoutElement` on a child controls how much space it takes:
-```csharp
-le.preferredHeight = 40;  // "I'd like to be 40px tall"
-```
-
-#### The Top Bar
-```
-+--[SOL SYSTEM MAP]--------[EARTH | TIER: HIGH | VR: HIGH]--+
-```
-- Anchored to top of screen, full width, 60px tall
-- Title text on the left
-- Selection info text on the right (updates when you click planets)
-
-#### The Settings Sidebar
-```
-+--PARAMETERS---------+
-|  SHIELDING LEVEL    |
-|  [====o--------]    |
-|  OFF                |
-|  ----------------   |
-|  VR PREVIEW         |
-|  Shows max feasible |
-|  [toggle] OFF       |
-|  ----------------   |
-|  MAX VR TIER: HIGH  |
-|  [3D preview image] |
-+---------------------+
-```
-- Anchored to left side, spans most of the height
-- Contains: title, shielding slider, VR toggle, preview display
-- 300px wide
-
-#### The Shielding Slider
-
-Unity's built-in `Slider` component needs child objects for its visual parts:
-
-```
-SliderGO (has Slider component)
-  ├── Background (dark gray track)
-  ├── FillArea
-  │   └── Fill (gold colored, grows with value)
-  └── HandleSlideArea
-      └── Handle (gold circle you drag)
-```
-
-```csharp
-shieldingSlider.wholeNumbers = true;  // snaps to integers
-shieldingSlider.minValue = 0;
-shieldingSlider.maxValue = 3;
-```
-`wholeNumbers = true` is the key -- it makes the slider snap to 0, 1, 2, 3 instead of sliding smoothly between them.
-
-```csharp
-shieldingSlider.onValueChanged.AddListener((val) => {
-    int level = Mathf.RoundToInt(val);
-    shieldingValueText.text = ShieldingLabels[level];  // "OFF", "LOW", etc.
-    GameManager.Instance.SetShieldingLevel(level);
-});
-```
-When the slider changes, update the text label and tell GameManager.
-
-#### The VR Toggle
-
-A simple ON/OFF button that:
-1. Changes its own color (dark gray <-> gold)
-2. Updates the "OFF"/"ON" text
-3. Tells GameManager
-4. Shows/hides the preview panel via CanvasGroup alpha
-
-#### CanvasGroup (Hide Without Layout Shift)
-```csharp
-previewCanvasGroup = previewSection.AddComponent<CanvasGroup>();
-previewCanvasGroup.alpha = 0f;           // invisible
-previewCanvasGroup.blocksRaycasts = false; // clicks pass through
-```
-**Why not just SetActive(false)?** Because `SetActive(false)` removes the element from the layout entirely. The VerticalLayoutGroup would then rearrange everything above it -- the VR toggle would jump down to fill the gap.
-
-CanvasGroup with alpha=0 makes it **invisible but still takes up space**. The toggle button stays exactly where it is.
-
-#### The 3D Preview (RenderTexture Trick)
-
-This is the coolest technique in the project:
-
-1. **Create a RenderTexture** -- a texture that a camera can draw into
-```csharp
-previewRenderTex = new RenderTexture(512, 512, 16);
-```
-
-2. **Create a second camera** far away from the main scene (position 1000, 1000, 995)
-```csharp
-previewCamera.targetTexture = previewRenderTex;
-```
-This camera renders to the texture instead of the screen.
-
-3. **Create preview objects** at position (1000, 1000, 1000) -- only this camera can see them
-   - Tier 0 (None): Dark sphere with red X bars
-   - Tier 1 (Low): Green sphere
-   - Tier 2 (Medium): Blue glowing sphere
-   - Tier 3 (High): Gold glowing sphere with a ring
-
-4. **Display the texture** on a UI RawImage
-```csharp
-previewDisplay.texture = previewRenderTex;
-```
-
-Result: a little window in the sidebar showing a spinning 3D object, rendered by a separate camera that's invisible to the player.
-
-Only one preview object is active at a time:
-```csharp
-tierPreviewObjects[i].SetActive(i == vrTierLevel);
-```
-
-#### Dropdown Arrows Following 3D Planets
-
-Each planet with moons gets a small arrow button in the UI. These buttons need to visually sit just below their planet, even though the planets are in 3D space and the buttons are in 2D UI space.
-
-Every frame in LateUpdate:
-```csharp
-// 1. Get the planet's world position (below the planet)
 Vector3 worldPos = planetObj.transform.position + Vector3.down * (planetRadius + 0.5f);
-
-// 2. Convert 3D world position to 2D screen position
 Vector3 screenPos = Camera.main.WorldToScreenPoint(worldPos);
-
-// 3. Convert screen position to canvas position
-RectTransformUtility.ScreenPointToLocalPointInRectangle(
-    canvasRT, screenPos, null, out canvasPos);
-
-// 4. Move the button there
+Vector2 canvasPos;
+RectTransformUtility.ScreenPointToLocalPointInRectangle(canvasRT, screenPos, null, out canvasPos);
 arrow.buttonRT.anchoredPosition = canvasPos;
 ```
 
-This 3-step conversion (World -> Screen -> Canvas) is how you make UI elements "stick" to 3D objects.
+1. Calculate where below the planet the arrow should be (half a unit below the sphere's bottom)
+2. `WorldToScreenPoint` converts 3D world coords to pixel coords on screen
+3. `ScreenPointToLocalPointInRectangle` converts screen pixels to the canvas's local coordinate system (accounting for the CanvasScaler's reference resolution). The `null` camera parameter works because the canvas is ScreenSpaceOverlay.
+4. Set the button's `anchoredPosition` (which is in canvas local space since anchors are at 0.5, 0.5)
 
-#### Selection Info Panel
-Bottom-right corner. Shows:
-- Selected planet/moon name (big gold text)
-- Type, Tier, Max VR level, moon count
+If `screenPos.z < 0`, the planet is behind the camera — hide the arrow.
 
-Updated via event handlers:
-```csharp
-private void OnLocationChanged(SpaceEnvironment env) {
-    selectionNameText.text = env.ToString().ToUpper();
-    // ... update detail text
-}
-```
-
-#### Back Button
-Bottom-left, 130x48px. Currently just a visual placeholder -- no navigation logic yet.
+This runs every `LateUpdate()` so arrows track planets in real-time.
 
 ---
 
-## 4. Data Flow
+## Event-Driven Architecture
 
-### When the user clicks a planet in the 3D scene:
+The app uses a publish-subscribe pattern via C# `Action` delegates.
+
+### Event Flow Diagram
+
 ```
-1. ClickDetector.Update() detects mouse click
-2. Shoots a raycast from camera through mouse position
-3. Ray hits a sphere with SpaceLocation component
-4. Calls GameManager.Instance.SelectLocation(SpaceEnvironment.Earth)
-5. GameManager updates CurrentSelection, fires OnLocationChanged event
-6. SystemMapUI.OnLocationChanged() receives the event
-7. Updates top bar text: "EARTH | TIER: HIGH | VR: HIGH"
-8. Updates selection panel: name, type, tier, VR level, moon count
-9. If VR Preview is ON, calls RefreshVRPreview()
-10. RefreshVRPreview() gets VR tier (3 for Earth), shows gold sphere in preview
+User Action
+    │
+    ├─ Click planet ──────────→ ClickDetector
+    │                               │
+    │                               ├→ GameManager.SelectLocation()
+    │                               │       ├→ OnLocationChanged ──→ SystemMapUI.OnLocationChanged()
+    │                               │       └→ RecalculateFidelity()
+    │                               │               └→ OnFidelityChanged ──→ SystemMapUI.OnFidelityChanged()
+    │                               │                                               └→ RefreshVRPreview()
+    │                               └→ SystemMapUI.ExpandPlanet()
+    │                                       └→ SolarSystemBuilder.ToggleMoons()
+    │
+    ├─ Click moon ────────────→ ClickDetector
+    │                               ├→ GameManager.SelectLocation() (parent)
+    │                               └→ GameManager.SelectSubLocation()
+    │                                       ├→ OnSubLocationChanged ──→ SystemMapUI
+    │                                       └→ RecalculateFidelity() → ...
+    │
+    ├─ Move shielding slider ─→ Slider.onValueChanged
+    │                               └→ GameManager.SetShieldingLevel()
+    │                                       ├→ OnShieldingChanged
+    │                                       └→ RecalculateFidelity() → ...
+    │
+    ├─ Move mission slider ───→ Slider.onValueChanged
+    │                               └→ GameManager.SetMissionDuration()
+    │                                       └→ RecalculateFidelity() → ...
+    │
+    ├─ Click hardware button ─→ Button.onClick
+    │                               ├→ GameManager.SetHardwareClass()
+    │                               │       └→ RecalculateFidelity() → ...
+    │                               └→ UpdateHardwareButtons() (visual)
+    │
+    └─ Toggle VR preview ─────→ Button.onClick
+                                    ├→ GameManager.SetVRPreview()
+                                    ├→ Toggle CanvasGroup alpha
+                                    └→ RefreshVRPreview()
 ```
 
-### When the user clicks a dropdown arrow:
-```
-1. UI Button click handler fires
-2. Calls SolarSystemBuilder.Instance.ToggleMoons(SpaceEnvironment.Earth)
-3. If another planet's moons are open, close them instantly
-4. StartAnimation() begins -- sets animProgress = 0, activates moon container
-5. Each frame in Update(): animProgress increases, ease-out curve applied
-6. Moon container Y-scale goes from 0 to 1 over 0.35 seconds
-7. Moon alpha fades from 0 to 1 simultaneously
-8. After 0.35s: FinishAnimation() sets final scale to 1.0
-```
-
-### When the user clicks a moon sphere:
-```
-1. ClickDetector detects click, raycast hits moon with SubLocationMarker
-2. Calls GameManager.SelectLocation(moon.parentEnvironment) -- selects parent planet
-3. Calls GameManager.SelectSubLocation(moon.subLocationName) -- selects the moon
-4. Both events fire, SystemMapUI updates both top bar and selection panel
-5. VR Preview refreshes using GetMoonVRTierLevel() for moon-specific VR tier
-```
-
-### When the user moves the shielding slider:
-```
-1. Slider.onValueChanged fires with new value (0, 1, 2, or 3)
-2. Updates text label to "OFF", "LOW", "MED", or "HIGH"
-3. Calls GameManager.Instance.SetShieldingLevel(level)
-4. GameManager stores value, fires OnShieldingChanged event
-```
-
-### When the user toggles VR Preview:
-```
-1. Button click handler fires
-2. Toggles vrToggleOn boolean
-3. Updates toggle box color (gray <-> gold)
-4. Updates status text ("OFF" <-> "ON")
-5. Sets CanvasGroup alpha (0 <-> 1) to show/hide preview panel
-6. If turning ON: calls RefreshVRPreview() to show correct tier model
-7. Tells GameManager via SetVRPreview()
-```
+### Subscription Lifecycle
+- Subscribed in `SystemMapUI.Start()` via `+=`
+- Unsubscribed in `SystemMapUI.OnDestroy()` via `-=`
+- This prevents memory leaks and null reference exceptions if the UI is destroyed before GameManager.
 
 ---
 
-## 5. Key Unity Concepts Used
+## Unity-Specific Tricks
 
-### MonoBehaviour
-The base class for all scripts that attach to GameObjects. Provides lifecycle methods:
-- `Awake()` -- called once, before Start, when the object is created
-- `Start()` -- called once, when the object first becomes active
-- `Update()` -- called every frame (60fps = 60 times per second)
-- `LateUpdate()` -- called every frame, but AFTER all Update() calls finish
-- `OnDestroy()` -- called when the object is destroyed (cleanup)
+### Programmatic Slider
+Unity's `Slider` component requires specific child hierarchy (Background, FillArea/Fill, HandleSlideArea/Handle). The code builds this exact hierarchy and assigns `slider.fillRect` and `slider.handleRect` references. Without these assignments, the slider appears but doesn't function.
 
-### GameObject vs Component
-- **GameObject** = a "thing" in the scene (can be invisible)
-- **Component** = a "feature" attached to a GameObject
-- A planet sphere is a GameObject. Its Renderer, Collider, SpaceLocation script are all Components.
-- `AddComponent<T>()` = attach a new component
-- `GetComponent<T>()` = find an existing component on the same object
+### CanvasGroup for Show/Hide
+The VR preview section uses `CanvasGroup.alpha = 0/1` instead of `SetActive(false/true)`. This maintains the section's layout space in the `VerticalLayoutGroup` — if you deactivate it, all elements below shift up. CanvasGroup also has `blocksRaycasts = false` when hidden, preventing invisible UI from eating clicks.
 
-### Transform
-Every GameObject has a Transform (position, rotation, scale in 3D space):
-- `transform.position` -- world position
-- `transform.localPosition` -- position relative to parent
-- `transform.localScale` -- size multiplier
-- `transform.Rotate()` -- rotate by some amount
-- `transform.SetParent()` -- make this a child of another object
-
-### RectTransform
-UI version of Transform. Uses anchors, pivot, and sizeDelta instead of just position:
-- `anchorMin/anchorMax` -- where the element attaches to its parent
-- `anchoredPosition` -- offset from anchors
-- `sizeDelta` -- size beyond anchor-defined area
-- `pivot` -- the "center point" for positioning and rotation
-
-### Canvas
-Required container for all UI. renderMode options:
-- `ScreenSpaceOverlay` -- draws on top of everything (what we use)
-- `ScreenSpaceCamera` -- drawn by a specific camera
-- `WorldSpace` -- exists in 3D space (like a TV screen in-game)
-
-### Physics.Raycast
-Shoots a ray through the physics world:
+### EventSystem Click-Through Guard
 ```csharp
-if(Physics.Raycast(ray, out hit)) {
-    // hit.collider -- the Collider that was hit
-    // hit.point -- the exact world position of the hit
-    // hit.collider.GetComponent<T>() -- get scripts on the hit object
-}
+if(EventSystem.current.IsPointerOverGameObject()) return;
 ```
-Only hits objects with Colliders (SphereCollider, BoxCollider, etc.).
+Without this, clicking a UI button would also fire a physics raycast through the button into the 3D scene, selecting whatever planet/moon is behind the UI. This line prevents that.
 
-### Events (Action)
-C# events allow loose coupling -- scripts communicate without knowing about each other:
+### Capture-by-Value in Loops
 ```csharp
-// Declare event
-public event Action<SpaceEnvironment> OnLocationChanged;
-
-// Subscribe (in another script)
-GameManager.Instance.OnLocationChanged += MyHandler;
-
-// Fire event
-OnLocationChanged?.Invoke(env);
-
-// Unsubscribe (important for cleanup!)
-GameManager.Instance.OnLocationChanged -= MyHandler;
+SpaceEnvironment capturedEnv = env;
+btn.onClick.AddListener(() => { SolarSystemBuilder.Instance.ToggleMoons(capturedEnv); });
 ```
-Always unsubscribe in OnDestroy() to prevent memory leaks.
+In C# closures, the loop variable `env` is captured by reference. By the time the button is clicked, the loop has finished and `env` is the last value. Creating `capturedEnv` captures the current iteration's value.
 
-### RenderTexture
-A texture that a Camera can render into. Used to create "picture-in-picture" effects:
+### Resources.Load for WebGL
+`Resources.Load<TextAsset>("RadData/dosimetry_table")` loads a JSON file synchronously from the `Assets/Resources/` folder. This works in WebGL (compiled into the build) unlike `System.IO.File` which doesn't exist in the browser. The path has no extension — Unity strips it.
+
+### RenderTexture Trick
+Rendering a 3D object inside a 2D UI panel:
+1. Place objects far away (1000, 1000, 1000) so they don't appear in the main camera
+2. Point a secondary camera at them
+3. Set `camera.targetTexture = renderTexture` so it renders to a texture instead of the screen
+4. Display that texture in a `RawImage` UI element
+
+### Material Color Alpha for Fade
+When animating moon dropdown, material alpha is set directly:
 ```csharp
-RenderTexture rt = new RenderTexture(512, 512, 16);
-camera.targetTexture = rt;      // camera renders to texture
-rawImage.texture = rt;          // UI element displays the texture
+Color c = rend.material.color;
+c.a = t;
+rend.material.color = c;
 ```
-
-### CanvasGroup
-Controls visibility/interactivity for a group of UI elements:
-- `alpha` -- 0 = invisible, 1 = fully visible (children still take up space)
-- `blocksRaycasts` -- whether clicks can hit elements in this group
-- Unlike SetActive(false), doesn't remove the element from layout calculations
+This works with the Standard shader in Opaque mode technically — the alpha won't actually be visible unless the shader is set to Fade or Transparent mode. The visual effect comes primarily from the Y-scale squash, not the alpha.
 
 ---
 
-## 6. How to Modify
+## What's Good About This Codebase
 
-### Add a new planet
-1. **SpaceLocation.cs**: Add to the `SpaceEnvironment` enum
-2. **SolarSystemBuilder.cs**: Add a new `PlanetDef` entry in the `planets` array
-3. **GameManager.cs**: Add a case in `GetTierName()` and `GetVRTierLevel()`
-4. **SpaceLocation.cs**: Optionally add moons in `SubLocationDatabase.BuildDatabase()`
+**Clear separation of concerns.** GameManager holds state, RadiationCalculator computes, SystemMapUI displays, SolarSystemBuilder builds the scene, ClickDetector handles input. No file does two things.
 
-### Add a new moon
-1. **SolarSystemBuilder.cs**: Add a new `MoonDef` entry in the `moons` array
-2. **SpaceLocation.cs**: Add to the parent planet's list in `SubLocationDatabase`
-3. **GameManager.cs**: Optionally add a case in `GetMoonVRTierLevel()` for custom VR tier
+**Data-driven design.** Adding a new planet, moon, hardware class, or shielding level means editing JSON — no C# changes needed (assuming the JSON structure stays the same).
 
-### Change colors
-- **Planet/moon colors**: In `SolarSystemBuilder.cs`, modify the `Color` in planet/moon definitions
-- **UI colors**: In `SystemMapUI.cs`, modify the color constants at the top of the class
+**Event-driven updates.** Changing any parameter automatically recalculates and updates all displays. No manual "refresh all UI" calls scattered around.
 
-### Change planet sizes/positions
-- In `SolarSystemBuilder.cs`, modify `radius` and `distance` in the planet definitions
+**The algorithm is real physics.** The TID values, shielding factors, hardware specs, and fidelity thresholds are from actual research data. The results are meaningful, not arbitrary.
 
-### Change spin speeds
-- In `SolarSystemBuilder.cs`, modify `spinSpeed` in planet definitions (degrees per second, negative = reverse)
+**WebGL-ready.** `Resources.Load` and `JsonUtility` both work in browser builds. No file I/O, no async loading complications.
 
-### Change dropdown animation speed
-- In `SolarSystemBuilder.cs`, modify `animDuration` (currently 0.35 seconds)
+**Defensive coding.** Null checks on GameManager.Instance, CurrentSelection.HasValue guards, Mathf.Clamp on all slider values, fallback primitives when model loading fails.
 
-### Change UI sizes (for different screen targets)
-- In `SystemMapUI.cs`, modify font sizes, sizeDelta values, and preferredHeight values
-- The CanvasScaler reference resolution (1920x1080) can be changed for different target screens
+---
 
-### Add a new sidebar control
-1. In `SystemMapUI.BuildSettingsSidebar()`, add new elements after the existing ones
-2. Create a label with `CreateText()`
-3. Create your control (slider, toggle, button, etc.)
-4. Add a state property and event in `GameManager.cs`
-5. Wire up the control's callback to call the GameManager method
+## What Could Be Improved
+
+**Model texture loading is brittle.** Hardcoded material name → texture name mappings in `ApplyModelTextures()`. If models are swapped, the mappings break. A convention-based system (material name matches texture filename) would be more maintainable.
+
+**No camera controls.** The camera is static. Users can't pan/zoom/orbit to see different parts of the solar system. A simple orbit camera or scroll-to-zoom would help.
+
+**Material alpha doesn't actually fade.** The dropdown animation sets alpha on Standard shader materials, but they're in Opaque mode. The Y-scale squash creates the illusion of folding, but a proper fade would need Transparent/Fade rendering mode.
+
+**Back button does nothing.** `BuildBackButton()` creates the button and text but no `onClick` handler. It's a placeholder.
+
+**No loading indicator.** `EnsureLoaded()` loads 4 JSON files synchronously on first use. On slow devices this could cause a frame hitch. An async loading approach with a spinner would be better, though synchronous loading is simpler for WebGL.
+
+**LocationPanelUI.cs still exists.** Legacy file from before the UI rewrite. Should be deleted.
+
+**Singleton fragility.** If multiple GameManager or SolarSystemBuilder instances exist, `Instance` silently overwrites. `DontDestroyOnLoad` isn't called, so scene reloads create duplicates. For a single-scene app this is fine.
+
+**Preview section layout.** The sidebar is getting tall. On shorter screens, the bottom of the sidebar (VR preview) may clip below the screen. A scrollview or collapsible sections would help.
+
+**Hard-coded bust fractions.** Mario uses 0.45, CS and Doom use 0.28. If models change, these values need manual tuning. Auto-detecting "head" vs "body" isn't trivial.
+
+---
+
+## How to Modify Things
+
+### Add a New Planet
+1. Add the name to `SpaceEnvironment` enum in `SpaceLocation.cs`
+2. Add an entry in `solar_system.json` with name, distance, radius, color, spin_speed
+3. Add a dosimetry entry in `dosimetry_table.json` with a unique ID
+4. Add the mapping in `RadiationCalculator.locationIdMap` (e.g., `{ "Pluto", "pluto_orbit" }`)
+
+### Add a New Moon
+1. Add an entry in the `moons` array of `solar_system.json` with name, parent, radius, color
+2. Add a `SubLocation` entry in `SubLocationDatabase.BuildDatabase()` in `SpaceLocation.cs`
+3. Add a dosimetry entry in `dosimetry_table.json`
+4. Add the mapping in `RadiationCalculator.locationIdMap`
+
+### Add a New Hardware Class
+1. Add the entry in `hardware_classes.json`
+2. Add entries in `RadiationCalculator.HardwareIds` and `HardwareNames` arrays
+3. Update `GameManager.SetHardwareClass()` clamp max (currently 3)
+4. Update `SystemMapUI.BuildHardwareSelector()` array sizes and loop bounds (currently 4)
+5. Update `SystemMapUI.UpdateHardwareButtons()` loop bound
+
+### Add a New Shielding Level
+1. Add the entry in `shielding_table.json`
+2. Update `GameManager.SetShieldingLevel()` clamp max (currently 2)
+3. Update `SystemMapUI.ShieldingLabels` array
+4. Update the shielding slider's `maxValue` in `BuildShieldingSlider()`
+
+### Change Preview Models
+1. Place model files (.obj or .fbx) + textures in `Assets/Resources/Models/YourModel/`
+2. In `SetupPreviewScene()`, update the `LoadPreviewModel()` path and adjust `bustFraction`
+3. If the model has special texture naming, add mappings in `ApplyModelTextures()`
+
+### Change Color Scheme
+All colors are `static readonly Color` at the top of `SystemMapUI.cs`. Change them there. The scheme is: dark backgrounds, gold/amber text, brighter gold for highlights, muted gold for secondary text.
+
+---
+
+## WebGL Deployment
+
+The app is designed for WebGL from the start. Key compatibility points:
+
+1. **`Resources.Load`** works in WebGL (compiled into the build data)
+2. **`JsonUtility.FromJson`** is Unity's C# parser (no native dependencies)
+3. **No `System.IO`** file operations anywhere
+4. **No async/await** patterns that might not work in older Unity WebGL
+5. **Standard shader** works in WebGL (though performance varies)
+6. **TextMeshPro** works in WebGL (font assets are included in build)
+
+To build:
+1. File → Build Settings → WebGL platform
+2. Switch Platform
+3. Player Settings: set compression (Brotli recommended), template (Minimal or Default)
+4. Build
+5. Output is an `index.html` + `Build/` folder + `TemplateData/` — host on any web server
+
+Potential WebGL issues:
+- Initial load time (all Resources are packed into the build)
+- Memory: WebGL runs in browser memory limits
+- Shader compilation may cause hitches on first frame
+- No `Application.Quit()` in browser
+- Touch input works differently (no hover)

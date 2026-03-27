@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -5,39 +6,24 @@ public class SolarSystemBuilder : MonoBehaviour {
 
     public static SolarSystemBuilder Instance;
 
-    [Header("Optional: assign existing planet objects to skip spawning them")]
-    [SerializeField] private GameObject existingSun;
-    [SerializeField] private GameObject existingEarth;
-    [SerializeField] private GameObject existingMars;
-
-    private struct PlanetDef {
-        public SpaceEnvironment env;
+    [Serializable] private class PlanetJson {
+        public string name;
         public float distance;
         public float radius;
-        public Color color;
-        public float spinSpeed; // degrees per second
-
-        public PlanetDef(SpaceEnvironment env, float distance, float radius, Color color, float spinSpeed) {
-            this.env = env;
-            this.distance = distance;
-            this.radius = radius;
-            this.color = color;
-            this.spinSpeed = spinSpeed;
-        }
+        public float[] color;
+        public float spin_speed;
     }
 
-    private struct MoonDef {
+    [Serializable] private class MoonJson {
         public string name;
-        public SpaceEnvironment parent;
+        public string parent;
         public float radius;
-        public Color color;
+        public float[] color;
+    }
 
-        public MoonDef(string name, SpaceEnvironment parent, float radius, Color color) {
-            this.name = name;
-            this.parent = parent;
-            this.radius = radius;
-            this.color = color;
-        }
+    [Serializable] private class SolarSystemJson {
+        public PlanetJson[] planets;
+        public MoonJson[] moons;
     }
 
     public Dictionary<SpaceEnvironment, GameObject> PlanetObjects { get; private set; }
@@ -46,16 +32,14 @@ public class SolarSystemBuilder : MonoBehaviour {
     private Dictionary<SpaceEnvironment, GameObject> moonContainers
         = new Dictionary<SpaceEnvironment, GameObject>();
 
-    // Spin tracking
     private Dictionary<SpaceEnvironment, float> planetSpinSpeeds
         = new Dictionary<SpaceEnvironment, float>();
 
-    // Animation
     private SpaceEnvironment? expandedPlanet;
     private SpaceEnvironment? animatingPlanet;
     private bool animatingOpen;
-    private float animProgress; // 0 to 1
-    private float animDuration = 0.35f; // seconds
+    private float animProgress;
+    private float animDuration = 0.35f;
 
     void Awake() {
         Instance = this;
@@ -66,14 +50,12 @@ public class SolarSystemBuilder : MonoBehaviour {
     }
 
     void Update() {
-        // Spin all planets
         foreach(var kvp in PlanetObjects) {
             if(planetSpinSpeeds.ContainsKey(kvp.Key)) {
                 kvp.Value.transform.Rotate(Vector3.up, planetSpinSpeeds[kvp.Key] * Time.deltaTime, Space.Self);
             }
         }
 
-        // Spin all visible moons
         foreach(var kvp in moonContainers) {
             if(kvp.Value.activeSelf) {
                 foreach(Transform child in kvp.Value.transform) {
@@ -82,7 +64,6 @@ public class SolarSystemBuilder : MonoBehaviour {
             }
         }
 
-        // Animate dropdown
         if(animatingPlanet.HasValue) {
             animProgress += Time.deltaTime / animDuration;
 
@@ -104,20 +85,16 @@ public class SolarSystemBuilder : MonoBehaviour {
     }
 
     public void ToggleMoons(SpaceEnvironment env) {
-        // Don't interrupt an ongoing animation
         if(animatingPlanet.HasValue) return;
 
         if(expandedPlanet == env) {
-            // Collapse current
             StartAnimation(env, false);
         } else {
-            // Collapse previous instantly if any
             if(expandedPlanet.HasValue && moonContainers.ContainsKey(expandedPlanet.Value)) {
                 SetMoonContainerScale(expandedPlanet.Value, 0f);
                 moonContainers[expandedPlanet.Value].SetActive(false);
                 expandedPlanet = null;
             }
-            // Open new
             StartAnimation(env, true);
         }
     }
@@ -139,7 +116,6 @@ public class SolarSystemBuilder : MonoBehaviour {
     private void UpdateAnimation() {
         if(!animatingPlanet.HasValue) return;
 
-        // Smooth ease-out curve
         float t = 1f - Mathf.Pow(1f - animProgress, 3f);
 
         if(animatingOpen) {
@@ -169,10 +145,8 @@ public class SolarSystemBuilder : MonoBehaviour {
         if(!moonContainers.ContainsKey(env)) return;
         GameObject container = moonContainers[env];
 
-        // Scale Y from 0 to 1 and fade alpha via renderer
         container.transform.localScale = new Vector3(1f, t, 1f);
 
-        // Also set individual moon alpha for a fade-in effect
         foreach(Transform child in container.transform) {
             Renderer rend = child.GetComponent<Renderer>();
             if(rend != null) {
@@ -183,77 +157,50 @@ public class SolarSystemBuilder : MonoBehaviour {
         }
     }
 
+    private SpaceEnvironment ParseEnv(string name) {
+        return (SpaceEnvironment)Enum.Parse(typeof(SpaceEnvironment), name);
+    }
+
+    private Color ParseColor(float[] c) {
+        return new Color(c[0], c[1], c[2]);
+    }
+
     private void BuildSolarSystem() {
+        TextAsset json = Resources.Load<TextAsset>("RadData/solar_system");
+        SolarSystemJson data = JsonUtility.FromJson<SolarSystemJson>(json.text);
+
         GameObject solarSystem = new GameObject("SolarSystem_Generated");
 
-        PlanetDef[] planets = new PlanetDef[] {
-            new PlanetDef(SpaceEnvironment.Sun,      0f,    3.0f,  new Color(1.0f, 0.85f, 0.3f),  2f),
-            new PlanetDef(SpaceEnvironment.Mercury,   5f,    0.3f,  new Color(0.7f, 0.65f, 0.6f),  15f),
-            new PlanetDef(SpaceEnvironment.Venus,     8f,    0.6f,  new Color(0.9f, 0.75f, 0.5f),  -8f),
-            new PlanetDef(SpaceEnvironment.Earth,    12f,    0.65f, new Color(0.2f, 0.5f, 0.9f),   12f),
-            new PlanetDef(SpaceEnvironment.Mars,     16f,    0.45f, new Color(0.8f, 0.35f, 0.2f),  11f),
-            new PlanetDef(SpaceEnvironment.Jupiter,  22f,    1.8f,  new Color(0.8f, 0.7f, 0.5f),   25f),
-            new PlanetDef(SpaceEnvironment.Saturn,   30f,    1.5f,  new Color(0.9f, 0.8f, 0.55f),  22f),
-            new PlanetDef(SpaceEnvironment.Uranus,   38f,    1.0f,  new Color(0.6f, 0.85f, 0.9f),  -18f),
-            new PlanetDef(SpaceEnvironment.Neptune,  45f,    0.95f, new Color(0.3f, 0.4f, 0.9f),   16f),
-        };
+        foreach(PlanetJson p in data.planets) {
+            SpaceEnvironment env = ParseEnv(p.name);
+            Color color = ParseColor(p.color);
 
-        MoonDef[] moons = new MoonDef[] {
-            new MoonDef("Moon",      SpaceEnvironment.Earth,   0.45f, new Color(0.75f, 0.75f, 0.75f)),
-            new MoonDef("ISS",       SpaceEnvironment.Earth,   0.20f, new Color(0.9f, 0.9f, 0.9f)),
-            new MoonDef("Phobos",    SpaceEnvironment.Mars,    0.25f, new Color(0.6f, 0.5f, 0.4f)),
-            new MoonDef("Deimos",    SpaceEnvironment.Mars,    0.20f, new Color(0.65f, 0.55f, 0.45f)),
-            new MoonDef("Io",        SpaceEnvironment.Jupiter, 0.38f, new Color(0.9f, 0.8f, 0.3f)),
-            new MoonDef("Europa",    SpaceEnvironment.Jupiter, 0.35f, new Color(0.85f, 0.8f, 0.7f)),
-            new MoonDef("Ganymede",  SpaceEnvironment.Jupiter, 0.45f, new Color(0.7f, 0.65f, 0.6f)),
-            new MoonDef("Callisto",  SpaceEnvironment.Jupiter, 0.40f, new Color(0.5f, 0.45f, 0.4f)),
-            new MoonDef("Titan",     SpaceEnvironment.Saturn,  0.50f, new Color(0.85f, 0.7f, 0.35f)),
-            new MoonDef("Enceladus", SpaceEnvironment.Saturn,  0.25f, new Color(0.95f, 0.95f, 0.95f)),
-            new MoonDef("Titania",   SpaceEnvironment.Uranus,  0.35f, new Color(0.75f, 0.75f, 0.8f)),
-            new MoonDef("Miranda",   SpaceEnvironment.Uranus,  0.22f, new Color(0.7f, 0.7f, 0.7f)),
-            new MoonDef("Triton",    SpaceEnvironment.Neptune, 0.38f, new Color(0.7f, 0.75f, 0.85f)),
-        };
+            GameObject planetGO = CreateSphere(p.name, p.radius, color);
+            planetGO.transform.SetParent(solarSystem.transform, false);
+            planetGO.transform.position = new Vector3(p.distance, 0, 0);
 
-        // --- Spawn planets ---
-        foreach(PlanetDef p in planets) {
-            GameObject planetGO = null;
-
-            if(p.env == SpaceEnvironment.Sun && existingSun != null) {
-                planetGO = existingSun;
-            } else if(p.env == SpaceEnvironment.Earth && existingEarth != null) {
-                planetGO = existingEarth;
-            } else if(p.env == SpaceEnvironment.Mars && existingMars != null) {
-                planetGO = existingMars;
-            } else {
-                planetGO = CreateSphere(p.env.ToString(), p.radius, p.color);
-                planetGO.transform.SetParent(solarSystem.transform, false);
-                planetGO.transform.position = new Vector3(p.distance, 0, 0);
-            }
-
-            SpaceLocation loc = planetGO.GetComponent<SpaceLocation>();
-            if(loc == null) loc = planetGO.AddComponent<SpaceLocation>();
-            loc.environment = p.env;
+            SpaceLocation loc = planetGO.AddComponent<SpaceLocation>();
+            loc.environment = env;
 
             if(planetGO.GetComponent<Collider>() == null) {
                 planetGO.AddComponent<SphereCollider>();
             }
 
-            PlanetObjects[p.env] = planetGO;
-            planetSpinSpeeds[p.env] = p.spinSpeed;
+            PlanetObjects[env] = planetGO;
+            planetSpinSpeeds[env] = p.spin_speed;
         }
 
-        // --- Group moons by parent ---
-        Dictionary<SpaceEnvironment, List<MoonDef>> moonsByPlanet = new Dictionary<SpaceEnvironment, List<MoonDef>>();
-        foreach(MoonDef m in moons) {
-            if(!moonsByPlanet.ContainsKey(m.parent))
-                moonsByPlanet[m.parent] = new List<MoonDef>();
-            moonsByPlanet[m.parent].Add(m);
+        Dictionary<SpaceEnvironment, List<MoonJson>> moonsByPlanet = new Dictionary<SpaceEnvironment, List<MoonJson>>();
+        foreach(MoonJson m in data.moons) {
+            SpaceEnvironment parentEnv = ParseEnv(m.parent);
+            if(!moonsByPlanet.ContainsKey(parentEnv))
+                moonsByPlanet[parentEnv] = new List<MoonJson>();
+            moonsByPlanet[parentEnv].Add(m);
         }
 
-        // --- Build moon containers (hidden by default) ---
         foreach(var kvp in moonsByPlanet) {
             SpaceEnvironment parentEnv = kvp.Key;
-            List<MoonDef> parentMoons = kvp.Value;
+            List<MoonJson> parentMoons = kvp.Value;
 
             if(!PlanetObjects.ContainsKey(parentEnv)) continue;
             GameObject parentPlanet = PlanetObjects[parentEnv];
@@ -268,8 +215,9 @@ public class SolarSystemBuilder : MonoBehaviour {
             float startY = -(planetRadius + 3.0f);
 
             for(int i = 0; i < parentMoons.Count; i++) {
-                MoonDef m = parentMoons[i];
-                GameObject moonGO = CreateSphere(m.name, m.radius, m.color);
+                MoonJson m = parentMoons[i];
+                Color color = ParseColor(m.color);
+                GameObject moonGO = CreateSphere(m.name, m.radius, color);
                 moonGO.transform.SetParent(container.transform, false);
 
                 float yPos = startY - (i * spacing);
@@ -277,7 +225,7 @@ public class SolarSystemBuilder : MonoBehaviour {
 
                 SubLocationMarker marker = moonGO.AddComponent<SubLocationMarker>();
                 marker.subLocationName = m.name;
-                marker.parentEnvironment = m.parent;
+                marker.parentEnvironment = parentEnv;
 
                 if(moonGO.GetComponent<Collider>() == null) {
                     moonGO.AddComponent<SphereCollider>();
@@ -297,11 +245,6 @@ public class SolarSystemBuilder : MonoBehaviour {
         Renderer rend = sphere.GetComponent<Renderer>();
         Material mat = new Material(Shader.Find("Standard"));
         mat.color = color;
-
-        if(name == "Sun") {
-            mat.EnableKeyword("_EMISSION");
-            mat.SetColor("_EmissionColor", color * 2f);
-        }
 
         rend.material = mat;
         return sphere;

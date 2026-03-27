@@ -1,0 +1,45 @@
+{
+  "description": "Hardware classes for the feasibility framework. All specs from Table 3.2.",
+  "classes": [
+    {
+      "id": "radhard_legacy",
+      "name": "Legacy Rad-Hard",
+      "short_name": "Rad-Hard (Legacy)",
+      "examples": "RAD750",
+      "gflops": 0.001,
+      "tid_tolerance_krad": 1000,
+      "overhead_factor": 1.0,
+      "overhead_note": "Table 3.1: RHBD 1.0x"
+    },
+    {
+      "id": "radhard_modern",
+      "name": "Modern Rad-Hard",
+      "short_name": "Rad-Hard (Modern)",
+      "examples": "RAD5545, GR740, RC64",
+      "gflops": 3.7,
+      "tid_tolerance_krad": 100,
+      "overhead_factor": 1.0,
+      "overhead_note": "Table 3.1: RHBD 1.0x"
+    },
+    {
+      "id": "fpga",
+      "name": "Space-Grade FPGA",
+      "short_name": "FPGA",
+      "examples": "Virtex-5QV, NG-ULTRA, XQR Versal",
+      "gflops": 529.5,
+      "tid_tolerance_krad": 100,
+      "overhead_factor": 1.15,
+      "overhead_note": "Table 3.1: SECDED midpoint (1.1-1.15x)"
+    },
+    {
+      "id": "cots",
+      "name": "Commercial Off-The-Shelf",
+      "short_name": "COTS",
+      "examples": "Jetson Nano/Xavier/Orin, Snapdragon 855",
+      "gflops": 1567,
+      "tid_tolerance_krad": 30,
+      "overhead_factor": 1.0,
+      "overhead_note": "No software fault tolerance; raw performance"
+    }
+  ]
+}

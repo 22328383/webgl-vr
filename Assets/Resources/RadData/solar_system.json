@@ -1,0 +1,92 @@
+{
+  "planets": [
+    {
+      "name": "Mercury",
+      "distance": 2,
+      "radius": 0.3,
+      "color": [0.7, 0.65, 0.6],
+      "spin_speed": 15
+    },
+    {
+      "name": "Venus",
+      "distance": 5,
+      "radius": 0.6,
+      "color": [0.9, 0.75, 0.5],
+      "spin_speed": -8
+    },
+    {
+      "name": "Earth",
+      "distance": 9,
+      "radius": 0.65,
+      "color": [0.2, 0.5, 0.9],
+      "spin_speed": 12
+    },
+    {
+      "name": "Mars",
+      "distance": 13,
+      "radius": 0.45,
+      "color": [0.8, 0.35, 0.2],
+      "spin_speed": 11
+    },
+    {
+      "name": "Jupiter",
+      "distance": 19,
+      "radius": 1.8,
+      "color": [0.8, 0.7, 0.5],
+      "spin_speed": 25
+    },
+    {
+      "name": "Saturn",
+      "distance": 27,
+      "radius": 1.5,
+      "color": [0.9, 0.8, 0.55],
+      "spin_speed": 22
+    },
+    {
+      "name": "Uranus",
+      "distance": 35,
+      "radius": 1.0,
+      "color": [0.6, 0.85, 0.9],
+      "spin_speed": -18
+    },
+    {
+      "name": "Neptune",
+      "distance": 42,
+      "radius": 0.95,
+      "color": [0.3, 0.4, 0.9],
+      "spin_speed": 16
+    }
+  ],
+  "moons": [
+    {
+      "name": "Moon",
+      "parent": "Earth",
+      "radius": 0.45,
+      "color": [0.75, 0.75, 0.75]
+    },
+    {
+      "name": "ISS",
+      "parent": "Earth",
+      "radius": 0.2,
+      "color": [0.9, 0.9, 0.9]
+    },
+    {
+      "name": "Io",
+      "parent": "Jupiter",
+      "radius": 0.38,
+      "color": [0.9, 0.8, 0.3]
+    },
+    {
+      "name": "Europa",
+      "parent": "Jupiter",
+      "radius": 0.35,
+      "color": [0.85, 0.8, 0.7]
+    },
+    {
+      "name": "Ganymede",
+      "parent": "Jupiter",
+      "radius": 0.45,
+      "color": [0.7, 0.65, 0.6]
+    }
+  ]
+}

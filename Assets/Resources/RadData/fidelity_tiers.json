@@ -1,0 +1,9 @@
+{
+  "description": "VR fidelity tier thresholds (Section 3.2.1)",
+  "tiers": [
+    { "tier": 0, "name": "Infeasible",    "short_name": "NONE", "gflops_min": -1,  "reference_system": null,                       "reference_gflops": null },
+    { "tier": 1, "name": "Wireframe VR",   "short_name": "LOW",  "gflops_min": 0.08, "reference_system": "Virtuality 1000 (1991)",    "reference_gflops": 0.08 },
+    { "tier": 2, "name": "Textured VR",    "short_name": "MED",  "gflops_min": 0.2,  "reference_system": "Virtuality 2000 (1993-94)", "reference_gflops": 0.2 },
+    { "tier": 3, "name": "Modern VR",      "short_name": "HIGH", "gflops_min": 567,  "reference_system": "Meta Quest 1 (2019)",       "reference_gflops": 567 }
+  ]
+}
