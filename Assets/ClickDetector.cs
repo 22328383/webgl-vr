@@ -6,7 +6,7 @@ public class ClickDetector : MonoBehaviour {
 
     void Update() {
         if(Input.GetMouseButtonDown(0)) {
-            if(EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+            if(EventSystem.current != null && IsPointerOverUIElement())
                 return;
 
             Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
@@ -30,5 +30,17 @@ public class ClickDetector : MonoBehaviour {
                 }
             }
         }
+    }
+
+    private bool IsPointerOverUIElement() {
+        UnityEngine.EventSystems.PointerEventData eventData = new UnityEngine.EventSystems.PointerEventData(EventSystem.current);
+        eventData.position = Input.mousePosition;
+        System.Collections.Generic.List<UnityEngine.EventSystems.RaycastResult> results = new System.Collections.Generic.List<UnityEngine.EventSystems.RaycastResult>();
+        EventSystem.current.RaycastAll(eventData, results);
+        foreach(var r in results) {
+            if(r.gameObject.layer == LayerMask.NameToLayer("UI"))
+                return true;
+        }
+        return false;
     }
 }

@@ -657,15 +657,12 @@ public class SystemMapUI : MonoBehaviour {
             tierPreviewObjects[0] = noneParent;
         }
 
-        tierPreviewObjects[1] = LoadPreviewModel("Models/Mario/mario", center, 0.015f, 0.45f);
-        if(tierPreviewObjects[1] == null)
-            tierPreviewObjects[1] = CreatePreviewPrimitive(PrimitiveType.Sphere, center, 0.8f,
-                new Color(0.3f, 0.5f, 0.3f), "Preview_Low", false);
+        tierPreviewObjects[1] = CreatePongPreview(center);
 
-        tierPreviewObjects[2] = LoadPreviewModel("Models/CounterStrike/COUNTER-TERRORIST_GIGN", center, 0.015f, 0.28f);
+        tierPreviewObjects[2] = LoadPreviewModel("Models/Mario/mario", center, 0.015f, 0.45f);
         if(tierPreviewObjects[2] == null)
             tierPreviewObjects[2] = CreatePreviewPrimitive(PrimitiveType.Sphere, center, 0.8f,
-                new Color(0.3f, 0.4f, 0.8f), "Preview_Medium", true);
+                new Color(0.3f, 0.5f, 0.3f), "Preview_Med", false);
 
         tierPreviewObjects[3] = LoadPreviewModel("Models/DoomSlayer/doommarine", center, 0.008f, 0.28f);
         if(tierPreviewObjects[3] == null) {
@@ -704,6 +701,51 @@ public class SystemMapUI : MonoBehaviour {
         }
         rend.material = mat;
         return obj;
+    }
+
+    private GameObject CreatePongPreview(Vector3 center) {
+        GameObject root = new GameObject("Preview_Pong");
+        root.transform.position = center;
+
+        Shader unlitShader = Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
+        Material whiteMat = new Material(unlitShader);
+        whiteMat.color = Color.white;
+
+        GameObject leftPaddle = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        leftPaddle.name = "Paddle_L";
+        leftPaddle.transform.SetParent(root.transform, false);
+        leftPaddle.transform.localPosition = new Vector3(-0.6f, 0f, 0f);
+        leftPaddle.transform.localScale = new Vector3(0.06f, 0.4f, 0.06f);
+        leftPaddle.GetComponent<Renderer>().material = whiteMat;
+        Destroy(leftPaddle.GetComponent<Collider>());
+
+        GameObject rightPaddle = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        rightPaddle.name = "Paddle_R";
+        rightPaddle.transform.SetParent(root.transform, false);
+        rightPaddle.transform.localPosition = new Vector3(0.6f, 0f, 0f);
+        rightPaddle.transform.localScale = new Vector3(0.06f, 0.4f, 0.06f);
+        rightPaddle.GetComponent<Renderer>().material = whiteMat;
+        Destroy(rightPaddle.GetComponent<Collider>());
+
+        GameObject ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        ball.name = "Ball";
+        ball.transform.SetParent(root.transform, false);
+        ball.transform.localPosition = new Vector3(0.15f, 0.1f, 0f);
+        ball.transform.localScale = new Vector3(0.07f, 0.07f, 0.07f);
+        ball.GetComponent<Renderer>().material = whiteMat;
+        Destroy(ball.GetComponent<Collider>());
+
+        for(int i = 0; i < 5; i++) {
+            GameObject dash = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            dash.name = "Dash_" + i;
+            dash.transform.SetParent(root.transform, false);
+            dash.transform.localPosition = new Vector3(0f, -0.4f + i * 0.2f, 0f);
+            dash.transform.localScale = new Vector3(0.03f, 0.08f, 0.03f);
+            dash.GetComponent<Renderer>().material = whiteMat;
+            Destroy(dash.GetComponent<Collider>());
+        }
+
+        return root;
     }
 
     private GameObject LoadErrorTextModel(Vector3 center) {
@@ -758,6 +800,14 @@ public class SystemMapUI : MonoBehaviour {
 
         foreach(Collider col in instance.GetComponentsInChildren<Collider>())
             Destroy(col);
+
+        if(resourcePath.Contains("mario") || resourcePath.Contains("Mario")) {
+            foreach(Transform child in instance.GetComponentsInChildren<Transform>(true)) {
+                string n = child.name.ToLower();
+                if(n.Contains("unused") || n.Contains("wing") || n.Contains("metal") || n.Contains("logo") || n.Contains("right_hand_cap"))
+                    child.gameObject.SetActive(false);
+            }
+        }
 
         Renderer[] renderers = instance.GetComponentsInChildren<Renderer>();
         if(renderers.Length == 0) {
@@ -835,10 +885,14 @@ public class SystemMapUI : MonoBehaviour {
                         }
                     }
                 }
+            }
+        }
 
-                if(mat.mainTexture == null) {
-                    Texture2D[] allTex = Resources.LoadAll<Texture2D>(folder.TrimEnd('/'));
-                    if(allTex.Length > 0) mat.mainTexture = allTex[0];
+        if(resourcePath.Contains("Mario") || resourcePath.Contains("mario")) {
+            foreach(Transform child in instance.GetComponentsInChildren<Transform>()) {
+                string n = child.name.ToLower();
+                if(n.Contains("unused") || n.Contains("wing") || n.Contains("metal") || n.Contains("logo")) {
+                    child.gameObject.SetActive(false);
                 }
             }
         }
@@ -850,6 +904,9 @@ public class SystemMapUI : MonoBehaviour {
             if(tierPreviewObjects[i] != null)
                 tierPreviewObjects[i].SetActive(i == vrTierLevel);
         }
+
+        if(previewCamera != null)
+            previewCamera.backgroundColor = vrTierLevel == 1 ? Color.black : new Color(0.03f, 0.03f, 0.06f, 1f);
 
         string[] tierNames = { "NONE", "LOW", "MEDIUM", "HIGH" };
         if(previewLabel != null) {

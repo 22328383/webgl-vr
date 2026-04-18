@@ -83,42 +83,45 @@ public static class RadiationCalculator {
     private static void EnsureLoaded() {
         if(loaded) return;
 
-        TextAsset dosText = Resources.Load<TextAsset>("RadData/dosimetry_table");
-        DosimetryTable dosTable = JsonUtility.FromJson<DosimetryTable>(dosText.text);
-        dosimetryMap = new Dictionary<string, DosimetryEntry>();
-        foreach(var entry in dosTable.locations) {
-            dosimetryMap[entry.id] = entry;
+        try {
+            TextAsset dosText = Resources.Load<TextAsset>("RadData/dosimetry_table");
+            DosimetryTable dosTable = JsonUtility.FromJson<DosimetryTable>(dosText.text);
+            dosimetryMap = new Dictionary<string, DosimetryEntry>();
+            foreach(var entry in dosTable.locations)
+                dosimetryMap[entry.id] = entry;
+
+            TextAsset shieldText = Resources.Load<TextAsset>("RadData/shielding_table");
+            ShieldingTable shieldTable = JsonUtility.FromJson<ShieldingTable>(shieldText.text);
+            shieldingLevels = shieldTable.levels;
+
+            TextAsset hwText = Resources.Load<TextAsset>("RadData/hardware_classes");
+            HardwareTable hwTable = JsonUtility.FromJson<HardwareTable>(hwText.text);
+            hardwareClasses = hwTable.classes;
+
+            TextAsset fidText = Resources.Load<TextAsset>("RadData/fidelity_tiers");
+            FidelityTable fidTable = JsonUtility.FromJson<FidelityTable>(fidText.text);
+            fidelityTiers = fidTable.tiers;
+
+            locationIdMap = new Dictionary<string, string> {
+                { "Mercury", "mercury_orbit" },
+                { "Venus", "venus_orbit" },
+                { "Earth", "leo_iss" },
+                { "Mars", "mars_orbit" },
+                { "Jupiter", "jupiter_orbit" },
+                { "Saturn", "saturn_orbit" },
+                { "Uranus", "uranus_orbit" },
+                { "Neptune", "neptune_orbit" },
+                { "Moon", "lunar_surface" },
+                { "ISS", "leo_iss" },
+                { "Io", "io" },
+                { "Europa", "europa" },
+                { "Ganymede", "ganymede" }
+            };
+
+            loaded = true;
+        } catch(System.Exception e) {
+            Debug.LogError("[RadiationCalculator] Failed to load data: " + e.Message);
         }
-
-        TextAsset shieldText = Resources.Load<TextAsset>("RadData/shielding_table");
-        ShieldingTable shieldTable = JsonUtility.FromJson<ShieldingTable>(shieldText.text);
-        shieldingLevels = shieldTable.levels;
-
-        TextAsset hwText = Resources.Load<TextAsset>("RadData/hardware_classes");
-        HardwareTable hwTable = JsonUtility.FromJson<HardwareTable>(hwText.text);
-        hardwareClasses = hwTable.classes;
-
-        TextAsset fidText = Resources.Load<TextAsset>("RadData/fidelity_tiers");
-        FidelityTable fidTable = JsonUtility.FromJson<FidelityTable>(fidText.text);
-        fidelityTiers = fidTable.tiers;
-
-        locationIdMap = new Dictionary<string, string> {
-            { "Mercury", "mercury_orbit" },
-            { "Venus", "venus_orbit" },
-            { "Earth", "leo_iss" },
-            { "Mars", "mars_orbit" },
-            { "Jupiter", "jupiter_orbit" },
-            { "Saturn", "saturn_orbit" },
-            { "Uranus", "uranus_orbit" },
-            { "Neptune", "neptune_orbit" },
-            { "Moon", "lunar_surface" },
-            { "ISS", "leo_iss" },
-            { "Io", "io" },
-            { "Europa", "europa" },
-            { "Ganymede", "ganymede" }
-        };
-
-        loaded = true;
     }
 
     public static string GetDosimetryId(SpaceEnvironment env, string moonName = null) {
