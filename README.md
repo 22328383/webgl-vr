@@ -1,17 +1,18 @@
-# WebGL VR Demo
+# VR Beyond Earth – Interactive WebGL Tool
 
-A browser-based demo showcasing **WebGL** for 3D rendering. Experience the immersive world of Virtual Reality (VR) directly in your browser!
+**Live demo:** [https://22328383.github.io/webgl-vr/](https://22328383.github.io/webgl-vr/)  
 
-## Demo
+### Quick start
+1. Open the link above.
+2. Pick a location in the Solar System (Earth orbit, Mars, etc.).
+3. Adjust the **shielding level** slider.
+4. Choose a **hardware class** (rad-hard, COTS GPU, FPGA).
+5. The tool instantly shows:
+   - Maximum VR fidelity tier you can run
+   - Expected hardware lifespan
+   - A live 3D preview that matches the tier
 
-**Try the live demo**:  
-[WebGL VR Demo](https://22328383.github.io/webgl-vr/)
+No download or installation required – everything runs in the browser.
 
-## Getting Started
-
-To run the demo locally, follow these steps:
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/22328383/webgl-vr.git
+### Repository
+https://github.com/22328383/webgl-vr
